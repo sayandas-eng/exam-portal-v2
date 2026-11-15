@@ -32,6 +32,11 @@ def home():
     return render_template("index.html")
 
 
+@app.get("/student")
+def student_portal():
+    return render_template("student.html")
+
+
 @app.get("/api")
 def api_info():
     return jsonify({
