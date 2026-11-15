@@ -51,3 +51,8 @@ input,textarea,select{font-size:16px}
   dialog{max-height:calc(100dvh - 24px);overflow:auto}
   dialog form{padding:26px 20px}
 }
+
+
+/* Tuition branding in the student portal header */
+.tuition-name{font:800 15px Manrope,sans-serif;color:#5148d9;background:#f1f0ff;border:1px solid #e3e1ff;border-radius:10px;padding:9px 15px;text-align:center;letter-spacing:.1px}
+@media(max-width:700px){.tuition-name{order:3;flex:1 0 100%;font-size:13px;padding:8px 10px}.top{row-gap:9px}}
