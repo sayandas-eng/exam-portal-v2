@@ -10,6 +10,10 @@ A separate Flask API for the V2 examination portal. It uses the isolated `portal
 - Set environment variables:
   - `DATABASE_URL`: Neon connection string for the V2 test branch
   - `ADMIN_API_KEY`: long random secret used in the `X-Admin-Key` request header
+  - `SECRET_KEY`: long random Flask session-signing secret
+  - `STUDENT_COMMON_PASSWORD`: school-wide student sign-in password; set privately in Render, never commit it
+
+Student login is limited to 8 attempts per minute per source IP. Admin write endpoints are limited to 60 requests per minute. Rate-limit counters use process memory and reset when the service restarts; use a shared Redis-backed store before scaling to multiple instances.
 
 ## API
 
