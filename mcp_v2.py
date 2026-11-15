@@ -282,11 +282,13 @@ def create_and_publish_exam(
     class_level: str = "Any Class",
     questions_json: str = "",
     availability_days: int = 3,
+    availability_start: str = "",
+    availability_end: str = "",
     duration_minutes: int = 45,
     review_minutes: int = 0,
     difficulty: str = "moderate",
 ) -> dict:
-    """Create and publish an examination in Exam Portal V2. Gemini generates the complete paper and answer key. availability_days controls how many days the exam remains open after publication (1–30, default 3). The portal applies its fixed shared student password securely; do not generate, request or disclose passwords or student IDs. Students enter their own name and class."""
+    """Create and publish an examination in Exam Portal V2. Gemini generates the complete paper and answer key. Prefer availability_start and availability_end for exact availability windows, as ISO 8601 timestamps with timezone offsets (IST is +05:30), for example 2026-11-05T15:00:00+05:30 and 2026-11-07T00:00:00+05:30. Both must be supplied together. The exam is accessible only when current time is at or after the start and strictly before the end. If exact timestamps are omitted, availability_days is used (1–30, default 3). The portal applies its fixed shared student password securely; do not generate, request or disclose passwords or student IDs. Students enter their own name and class."""
     display_class = str(class_level or "Any Class").strip() or "Any Class"
     normalized_class = normalize_class(display_class)
     if not title.strip() or not subject.strip() or not topic.strip():
@@ -295,6 +297,24 @@ def create_and_publish_exam(
         raise ValueError("Duration must be 1–300 minutes and review time 0–120 minutes.")
     if not 1 <= int(availability_days) <= 30:
         raise ValueError("availability_days must be between 1 and 30.")
+    if bool(availability_start.strip()) != bool(availability_end.strip()):
+        raise ValueError("Provide both availability_start and availability_end, or leave both blank.")
+    window_payload = {}
+    if availability_start.strip():
+        from datetime import datetime
+        try:
+            start_dt = datetime.fromisoformat(availability_start.strip().replace("Z", "+00:00"))
+            end_dt = datetime.fromisoformat(availability_end.strip().replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("Use ISO 8601 timestamps, e.g. 2026-11-05T15:00:00+05:30.") from exc
+        if start_dt.tzinfo is None or end_dt.tzinfo is None:
+            raise ValueError("Availability timestamps must include a timezone. Use +05:30 for IST.")
+        if end_dt <= start_dt:
+            raise ValueError("availability_end must be later than availability_start.")
+        window_payload = {
+            "availability_start": start_dt.isoformat(),
+            "availability_end": end_dt.isoformat(),
+        }
     try:
         raw_questions = __import__("json").loads(questions_json)
     except Exception as exc:
@@ -340,7 +360,7 @@ def create_and_publish_exam(
         "title": title, "subject": subject, "topic": topic,
         "target_class": normalized_class, "difficulty": difficulty,
         "duration_minutes": int(duration_minutes), "review_minutes": int(review_minutes),
-        "availability_days": int(availability_days), "questions": questions,
+        "availability_days": int(availability_days), **window_payload, "questions": questions,
     })
     exam_id = created["exam_id"]
     published = portal_call("POST", f"/api/admin/exams/{exam_id}/publish", json={})
@@ -349,10 +369,11 @@ def create_and_publish_exam(
         "class_level": display_class, "status": published.get("status", "live"),
         "question_count": created.get("question_count"),
         "total_marks": created.get("total_marks"),
-        "availability_days": int(availability_days),
+        "availability_days": int(availability_days) if not window_payload else None,
+        "available_from": published.get("available_from"),
         "available_until": published.get("available_until"),
         "student_portal": BASE + "/",
-        "message": "Exam published. It is open for the configured number of days. Students sign in using their own name, class and the portal's fixed shared password.",
+        "message": "Exam published. It is accessible only within the exact configured start/end window. Students sign in using their own name, class and the portal's fixed shared password.",
     }
 
 @mcp.tool()
