@@ -31,3 +31,5 @@ button,a,input,textarea{touch-action:manipulation}
 }
 
 .grading .awarded,.grading .feedback-view{background:#f7f7fc;border:1px solid #ececf5;border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:6px}.grading .awarded strong{font:800 18px Manrope;color:#5148d9}.grading .awarded small,.grading .feedback-view p{margin:0;color:#777d91;font-size:12px;line-height:1.5}.grading .feedback-view b,.grading .awarded b{font-size:11px;color:#646a7e}
+
+.download{display:inline-block;margin:4px 0 4px 6px;padding:8px 10px;border-radius:7px;background:#eef2ff;color:#5148d9;text-decoration:none;font-size:11px;font-weight:700;white-space:nowrap}.download:hover{background:#e3e5ff}
