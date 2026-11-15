@@ -29,3 +29,5 @@ button,a,input,textarea{touch-action:manipulation}
   #finalise{width:100%;min-height:46px}
   footer{padding:32px 0 8px}
 }
+
+.grading .awarded,.grading .feedback-view{background:#f7f7fc;border:1px solid #ececf5;border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:6px}.grading .awarded strong{font:800 18px Manrope;color:#5148d9}.grading .awarded small,.grading .feedback-view p{margin:0;color:#777d91;font-size:12px;line-height:1.5}.grading .feedback-view b,.grading .awarded b{font-size:11px;color:#646a7e}
