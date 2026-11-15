@@ -1,15 +1,25 @@
 import os
 import uuid
+import hmac
 from datetime import datetime, timedelta, timezone
 
 import psycopg
 from psycopg.rows import dict_row
 from flask import Flask, jsonify, request, render_template, session
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY")
-app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SECURE=True, SESSION_COOKIE_SAMESITE="Lax", PERMANENT_SESSION_LIFETIME=timedelta(days=7))
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=timedelta(days=7),
+    MAX_CONTENT_LENGTH=2 * 1024 * 1024,
+)
+limiter = Limiter(get_remote_address, app=app, default_limits=[], storage_uri="memory://")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 
@@ -22,7 +32,7 @@ def db():
 
 def admin_required():
     supplied = request.headers.get("X-Admin-Key", "")
-    return bool(ADMIN_API_KEY and supplied and supplied == ADMIN_API_KEY)
+    return bool(ADMIN_API_KEY and supplied and hmac.compare_digest(supplied, ADMIN_API_KEY))
 
 
 def error(message, status=400):
@@ -45,6 +55,7 @@ def student_required():
 
 
 @app.post("/api/student/login")
+@limiter.limit("8 per minute")
 def student_login():
     data = request.get_json(silent=True) or {}
     name = str(data.get("full_name", "")).strip()
@@ -56,7 +67,7 @@ def student_login():
         return error("Student sign-in is temporarily unavailable. Please contact the administrator.", 503)
     if not name or not student_class or len(name) > 120 or len(student_class) > 60:
         return error("Enter your student name and class")
-    if not __import__("hmac").compare_digest(password, common_password):
+    if not hmac.compare_digest(password, common_password):
         return error("Incorrect student details or common password", 401)
     session.clear()
     session["student_name"] = name
@@ -146,6 +157,7 @@ def admin_list_exams():
 
 
 @app.post("/api/admin/exams")
+@limiter.limit("60 per minute")
 def create_exam():
     if not admin_required():
         return error("Admin authentication required", 401)
@@ -201,6 +213,7 @@ def create_exam():
 
 
 @app.post("/api/admin/exams/<exam_id>/publish")
+@limiter.limit("60 per minute")
 def publish_exam(exam_id):
     if not admin_required():
         return error("Admin authentication required", 401)
@@ -479,6 +492,7 @@ def admin_attempt_detail(attempt_id):
 
 
 @app.post("/api/admin/attempts/<attempt_id>/evaluate")
+@limiter.limit("60 per minute")
 def evaluate_attempt(attempt_id):
     if not admin_required():
         return error("Admin authentication required", 401)
