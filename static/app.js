@@ -57,8 +57,9 @@
   }
   async function loadExams() {
     if (!adminKey) return;
-    try { const data = await api("/api/admin/exams"); exams = data.exams || []; renderExams(); }
-    catch (err) { showNotice(err.message, "error"); }
+    const data = await api("/api/admin/exams");
+    exams = data.exams || [];
+    renderExams();
   }
   $("#connect-button").addEventListener("click", async () => {
     const key = $("#admin-key").value.trim();
@@ -68,7 +69,7 @@
     try { await loadExams(); showNotice("Admin access connected. Your examinations are ready.", "success"); $("#connect-button").textContent="Connected"; $("#admin-key").value=""; }
     catch (err) { adminKey=""; $("#connect-button").textContent="Connect"; showNotice(err.message, "error"); }
   });
-  $("#refresh-button").addEventListener("click", loadExams);
+  $("#refresh-button").addEventListener("click", () => loadExams().catch(err => showNotice(err.message, "error")));
   $("#exam-search").addEventListener("input", renderExams);
   $("#status-filter").addEventListener("change", renderExams);
   $("#new-exam-button").addEventListener("click", () => setView("create"));
