@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f8fc"><title>Student Portal · Exam Portal V2</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/student.css">
+</head>
+<body>
+  <header class="top"><a class="brand" href="/"><span class="mark">E</span><span>exam<span class="muted">portal</span><small>STUDENT PORTAL</small></span></a><a class="admin-link" href="/">Admin workspace ↗</a></header>
+  <main class="wrap">
+    <section id="listing-screen">
+      <div class="intro"><p class="eyebrow">YOUR LEARNING, YOUR PACE</p><h1>Ready for your <span>next challenge?</span></h1><p class="sub">Choose an available examination below. Make sure you have enough time before starting.</p></div>
+      <div id="message" class="message" role="status" aria-live="polite"></div>
+      <div class="list-head"><div><h2>Available examinations</h2><p>Only published examinations appear here.</p></div><button id="reload" class="button secondary">↻ Refresh</button></div>
+      <div id="exam-list" class="exam-grid"><div class="loading">Loading available examinations…</div></div>
+    </section>
+    <section id="exam-screen" class="hidden">
+      <div class="exam-top"><button id="back" class="back">← Exit exam</button><div class="timer-wrap"><span>TIME REMAINING</span><strong id="timer">--:--</strong></div></div>
+      <div class="exam-heading"><p class="eyebrow" id="exam-subject"></p><h1 id="exam-title">Examination</h1><p id="student-label" class="sub"></p></div>
+      <div class="progress"><span id="progress-fill"></span></div><div class="question-layout"><nav id="question-nav" class="question-nav"></nav><article class="question-panel"><div class="question-meta"><span id="question-count">QUESTION 1</span><span id="question-marks">1 mark</span></div><h2 id="question-prompt"></h2><div id="answer-area"></div><div class="question-actions"><button id="previous" class="button secondary">Previous</button><span id="save-status">Answers save automatically</span><button id="next" class="button primary">Next question →</button></div></article></div>
+      <div class="submit-row"><span id="answered-count">0 answered</span><button id="submit" class="button submit">Submit examination</button></div>
+    </section>
+    <section id="done-screen" class="done hidden"><div class="done-icon">✓</div><p class="eyebrow">SUBMISSION RECEIVED</p><h1>Exam submitted.</h1><p id="done-copy">Your answers have been saved. You can close this page.</p><a class="button primary" href="/student">Back to student portal</a></section>
+    <footer>Exam Portal V2 <span>·</span> Assessment workspace</footer>
+  </main>
+  <dialog id="start-dialog"><form id="start-form" method="dialog"><button type="button" class="dialog-close" id="close-dialog">×</button><p class="eyebrow">BEFORE YOU BEGIN</p><h2 id="dialog-title">Start examination</h2><p id="dialog-info" class="sub"></p><label>Full name<input name="student_name" required maxlength="120" placeholder="Enter your name"></label><label>Class / grade<input name="student_class" required maxlength="60" placeholder="e.g. Class 10"></label><label id="password-field" class="hidden">Exam password<input name="exam_password" type="password" autocomplete="off"></label><p class="fine">By starting, the exam timer will begin immediately. Keep this tab open while answering.</p><button class="button primary full" type="submit">Start examination →</button></form></dialog>
+  <script src="/static/student.js" defer></script>
+</body></html>
