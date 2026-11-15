@@ -326,9 +326,10 @@ def resume_attempt(attempt_id):
         if now > attempt["review_deadline"]:
             cur.execute("""
                 UPDATE portal_v2_attempts
-                SET status='submitted', submitted_at=review_deadline
+                SET status='submitted', submitted_at=now()
                 WHERE id=%s AND status='in_progress'
             """, (attempt_id,))
+            cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
             return error("The answer window has closed. Your saved answers have been submitted.", 409)
         cur.execute("""
             SELECT q.id, q.position, q.question_type, q.prompt, q.options, q.marks,
@@ -356,12 +357,21 @@ def save_answer(attempt_id, question_id):
             FROM portal_v2_attempts a
             JOIN portal_v2_questions q ON q.exam_id=a.exam_id
             WHERE a.id=%s AND q.id=%s AND a.student_user_id=%s
+            FOR UPDATE OF a
         """, (attempt_id, question_id, session["student_user_id"]))
         row = cur.fetchone()
         if not row:
             return error("Attempt or question not found", 404)
-        if row["status"] != "in_progress" or datetime.now(timezone.utc) > row["review_deadline"]:
+        if row["status"] != "in_progress":
             return error("The answer window has closed", 409)
+        if datetime.now(timezone.utc) > row["review_deadline"]:
+            cur.execute("""
+                UPDATE portal_v2_attempts
+                SET status='submitted', submitted_at=now()
+                WHERE id=%s AND status='in_progress'
+            """, (attempt_id,))
+            cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
+            return error("The deadline passed. Your saved answers have been submitted.", 409)
         cur.execute("""
             INSERT INTO portal_v2_answers
             (attempt_id, question_id, answer_text, selected_option, is_final, saved_at)
@@ -380,12 +390,22 @@ def submit_attempt(attempt_id):
         return error("Student sign-in required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
-            UPDATE portal_v2_attempts SET status='submitted', submitted_at=now()
-            WHERE id=%s AND student_user_id=%s AND status='in_progress' RETURNING id
+            SELECT status, review_deadline FROM portal_v2_attempts
+            WHERE id=%s AND student_user_id=%s FOR UPDATE
         """, (attempt_id, session["student_user_id"]))
-        if not cur.fetchone():
-            return error("Attempt not found or already submitted", 409)
+        row = cur.fetchone()
+        if not row:
+            return error("Attempt not found", 404)
+        if row["status"] != "in_progress":
+            return error("Attempt already submitted", 409)
+        expired = datetime.now(timezone.utc) > row["review_deadline"]
+        cur.execute("""
+            UPDATE portal_v2_attempts SET status='submitted', submitted_at=now()
+            WHERE id=%s AND student_user_id=%s AND status='in_progress'
+        """, (attempt_id, session["student_user_id"]))
         cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
+        if expired:
+            return error("The deadline passed. Your saved answers have been submitted.", 409)
     return jsonify({"ok": True, "status": "submitted"})
 
 
