@@ -58,6 +58,12 @@ def student_required():
     return bool(session.get("student_name") and session.get("student_class"))
 
 
+def normalize_student_class(value):
+    value = str(value).strip()
+    match = __import__("re").fullmatch(r"(?:class\\s*)?(\\d+)", value, flags=__import__("re").IGNORECASE)
+    return f"Class {match.group(1)}" if match else value
+
+
 @app.before_request
 def protect_student_mutations():
     if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
@@ -77,7 +83,7 @@ def protect_student_mutations():
 def student_login():
     data = request.get_json(silent=True) or {}
     name = str(data.get("full_name", "")).strip()
-    student_class = str(data.get("student_class", "")).strip()
+    student_class = normalize_student_class(data.get("student_class", ""))
     password = str(data.get("password", ""))
     if not name or not student_class or len(name) > 120 or len(student_class) > 60 or not password:
         return error("Enter your student name, class and examination password")
@@ -88,7 +94,7 @@ def student_login():
             SELECT id, target_class, exam_password_hash
             FROM portal_v2_exams
             WHERE status='live' AND exam_password_hash IS NOT NULL
-              AND (target_class IS NULL OR lower(trim(target_class))=lower(trim(%s)))
+              AND (target_class IS NULL OR lower(regexp_replace(trim(target_class), '^class\\s*', '', 'i'))=lower(regexp_replace(trim(%s), '^class\\s*', '', 'i')))
             ORDER BY published_at DESC NULLS LAST
         """, (student_class,))
         candidates = cur.fetchall()
@@ -290,7 +296,7 @@ def start_exam(exam_id):
             return error("Exam not found or not currently live", 404)
         if str(exam["id"]) != str(session.get("authorized_exam_id")):
             return error("Sign in with the common password for this examination", 403)
-        if exam["target_class"] and exam["target_class"].strip().lower() != student_class.lower():
+        if exam["target_class"] and normalize_student_class(exam["target_class"]).lower() != normalize_student_class(student_class).lower():
             return error("This exam is not assigned to the supplied class", 403)
         session_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
