@@ -33,7 +33,10 @@ def db():
 
 def admin_required():
     supplied = request.headers.get("X-Admin-Key", "")
-    return bool(ADMIN_API_KEY and supplied and hmac.compare_digest(supplied, ADMIN_API_KEY))
+    valid_admin = bool(ADMIN_API_KEY and supplied and hmac.compare_digest(supplied, ADMIN_API_KEY))
+    mcp_token = os.getenv("MCP_API_TOKEN", "")
+    valid_mcp = bool(mcp_token and supplied and hmac.compare_digest(supplied, mcp_token))
+    return valid_admin or valid_mcp
 
 
 def error(message, status=400):
