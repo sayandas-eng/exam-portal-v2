@@ -45,12 +45,19 @@ def error(message, status=400):
 
 @app.get("/")
 def home():
-    return render_template("index.html")
+    # Public entry point: students must see the login page first.
+    return render_template("student.html")
 
 
 @app.get("/student")
 def student_portal():
     return render_template("student.html")
+
+
+@app.get("/admin")
+def admin_portal():
+    # Keep the administration dashboard on its own explicit URL.
+    return render_template("index.html")
 
 
 
