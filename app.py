@@ -53,6 +53,12 @@ def db():
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS availability_days INTEGER NOT NULL DEFAULT 3")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_until TIMESTAMPTZ")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_from TIMESTAMPTZ")
+        conn.execute("ALTER TABLE portal_v2_exams DROP CONSTRAINT IF EXISTS portal_v2_exams_status_check")
+        conn.execute("""
+            ALTER TABLE portal_v2_exams
+            ADD CONSTRAINT portal_v2_exams_status_check
+            CHECK (status IN ('draft', 'live', 'paused', 'archived', 'deleted'))
+        """)
         conn.execute("""UPDATE portal_v2_exams
                         SET available_until = published_at + (availability_days::text || ' days')::interval
                         WHERE status='live' AND available_until IS NULL AND published_at IS NOT NULL""")
@@ -795,8 +801,10 @@ def teacher_portal():
 
 @app.get("/api/admin/attempts")
 def admin_list_attempts():
-    if not admin_required():        return error("Admin authentication required", 401)
-    with db() as conn, conn.cursor() as cur:        cur.execute("""
+    if not admin_required():
+        return error("Admin authentication required", 401)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
                    a.started_at, a.submitted_at, e.id AS exam_id,
                    e.title AS exam_title, e.subject, e.total_marks,
