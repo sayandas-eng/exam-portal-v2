@@ -56,3 +56,8 @@ input,textarea,select{font-size:16px}
 /* Tuition branding in the student portal header */
 .tuition-name{font:800 15px Manrope,sans-serif;color:#5148d9;background:#f1f0ff;border:1px solid #e3e1ff;border-radius:10px;padding:9px 15px;text-align:center;letter-spacing:.1px}
 @media(max-width:700px){.tuition-name{order:3;flex:1 0 100%;font-size:13px;padding:8px 10px}.top{row-gap:9px}}
+
+
+/* Refined tuition brand styling to match the portal's visual identity */
+.tuition-name{font:800 18px Manrope,sans-serif;color:#20243a;background:transparent;border:0;border-left:3px solid #5148d9;border-radius:0;padding:7px 16px;letter-spacing:-.25px;box-shadow:none}
+@media(max-width:700px){.tuition-name{font-size:16px;padding:7px 10px;text-align:center}}
