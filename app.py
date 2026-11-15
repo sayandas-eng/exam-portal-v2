@@ -64,10 +64,15 @@ def db():
 
 
 def purge_expired_exams():
-    """Retain expired exams and all student records; availability filters hide them from students."""
-    # Historical exam papers, attempts, answers and evaluations are permanent records.
-    # Expiry is enforced by the live-exam queries, not by deleting database rows.
-    return
+    """Archive expired exams without deleting student attempts, answers or results."""
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            UPDATE portal_v2_exams
+            SET status='archived'
+            WHERE status='live'
+              AND available_until IS NOT NULL
+              AND available_until <= now()
+        """)
 
 
 def _expiry_cleanup_loop():
@@ -323,6 +328,7 @@ def admin_list_exams():
                    COUNT(q.id)::int AS question_count
             FROM portal_v2_exams e
             LEFT JOIN portal_v2_questions q ON q.exam_id=e.id
+            WHERE e.status NOT IN ('archived','deleted')
             GROUP BY e.id
             ORDER BY e.created_at DESC
         """)
@@ -444,6 +450,35 @@ def publish_exam(exam_id):
         window = cur.fetchone()
     return jsonify({"ok": True, "exam_id": exam_id, "status": "live",
                     "available_from": window["available_from"], "available_until": window["available_until"]})
+
+
+@app.post("/api/admin/exams/<exam_id>/delete")
+def delete_exam(exam_id):
+    if not admin_required():
+        return error("Admin authentication required", 401)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT 1 FROM portal_v2_attempts
+                WHERE exam_id=%s AND status='in_progress'
+            ) AS has_active_attempt
+        """, (exam_id,))
+        if cur.fetchone()["has_active_attempt"]:
+            return error("This exam has students with an attempt in progress. Wait until they submit or their attempts expire before deleting it.", 409)
+        cur.execute("""
+            UPDATE portal_v2_exams
+            SET status='deleted'
+            WHERE id=%s AND status NOT IN ('archived','deleted')
+            RETURNING id
+        """, (exam_id,))
+        if not cur.fetchone():
+            return error("Exam not found or already removed", 404)
+        cur.execute("""
+            INSERT INTO portal_v2_audit_log (actor, action, entity_type, entity_id)
+            VALUES ('admin', 'exam_deleted', 'exam', %s)
+        """, (exam_id,))
+    return jsonify({"ok": True, "exam_id": exam_id, "status": "deleted",
+                    "records_preserved": True})
 
 
 @app.post("/api/exams/<exam_id>/start")
