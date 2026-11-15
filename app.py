@@ -592,6 +592,47 @@ def save_answer(attempt_id, question_id):
     return jsonify({"ok": True, "saved": True})
 
 
+def _normalize_marking_text(value):
+    import re
+    return re.sub(r"\\s+", " ", re.sub(r"[^\\w\\s]", " ", str(value or "").lower())).strip()
+
+
+def _auto_mark_saq(answer, expected_answer, marking_scheme, maximum_marks):
+    """Conservative SAQ auto-marker. Returns (marks, feedback) or None for teacher review."""
+    normalized = _normalize_marking_text(answer)
+    if not normalized:
+        return 0.0, "Automatically marked: no answer was provided."
+    scheme = marking_scheme if isinstance(marking_scheme, dict) else {}
+    criteria = scheme.get("criteria")
+    if isinstance(criteria, list) and criteria:
+        earned = 0.0
+        notes = []
+        for criterion in criteria:
+            if not isinstance(criterion, dict):
+                continue
+            try:
+                weight = float(criterion.get("marks", 0))
+            except (TypeError, ValueError):
+                continue
+            if weight <= 0:
+                continue
+            required = [str(x).strip().lower() for x in criterion.get("keywords", []) if str(x).strip()]
+            any_of = [str(x).strip().lower() for x in criterion.get("any_of", []) if str(x).strip()]
+            required_ok = all(_normalize_marking_text(term) in normalized for term in required)
+            any_ok = not any_of or any(_normalize_marking_text(term) in normalized for term in any_of)
+            if required_ok and any_ok:
+                earned += weight
+                notes.append(str(criterion.get("description") or "Criterion met"))
+        earned = min(float(maximum_marks), earned)
+        return earned, ("Automatically marked against the supplied criteria. Met: " + (", ".join(notes) if notes else "no rubric criteria") + ".")
+    expected = _normalize_marking_text(expected_answer)
+    if expected:
+        if normalized == expected:
+            return float(maximum_marks), "Automatically marked: the answer matches the expected answer."
+        return None
+    return None
+
+
 @app.post("/api/attempts/<attempt_id>/submit")
 def submit_attempt(attempt_id):
     if not student_required():
@@ -613,6 +654,42 @@ def submit_attempt(attempt_id):
             WHERE id=%s AND student_name=%s AND student_class=%s AND status='in_progress'
         """, (attempt_id, session["student_name"], session["student_class"]))
         cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
+        # Automatically grade MCQs and rubric-backed SAQs. LAQs always remain for teacher review.
+        cur.execute("""
+            SELECT q.id AS question_id, q.question_type, q.correct_option,
+                   q.expected_answer, q.marking_scheme, q.marks,
+                   ans.selected_option, ans.answer_text
+            FROM portal_v2_questions q
+            LEFT JOIN portal_v2_answers ans
+              ON ans.question_id=q.id AND ans.attempt_id=%s
+            JOIN portal_v2_attempts a ON a.exam_id=q.exam_id
+            WHERE a.id=%s
+            ORDER BY q.position
+        """, (attempt_id, attempt_id))
+        for q in cur.fetchall():
+            auto_marks = None
+            feedback = ""
+            if q["question_type"] == "mcq":
+                auto_marks = float(q["marks"]) if q["selected_option"] and q["selected_option"] == q["correct_option"] else 0.0
+                feedback = "Automatically marked: correct option." if auto_marks else "Automatically marked: incorrect or unanswered."
+            elif q["question_type"] == "saq":
+                scheme = q["marking_scheme"] or {}
+                if isinstance(scheme, str):
+                    try:
+                        scheme = __import__("json").loads(scheme)
+                    except Exception:
+                        scheme = {}
+                marked = _auto_mark_saq(q["answer_text"], q["expected_answer"], scheme, q["marks"])
+                if marked is not None:
+                    auto_marks, feedback = marked
+            if auto_marks is not None:
+                cur.execute("""
+                    INSERT INTO portal_v2_evaluations
+                    (attempt_id, question_id, ai_marks, final_marks, ai_feedback,
+                     reviewed_by, reviewed_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, 'AutoMark', now(), now())
+                    ON CONFLICT (attempt_id, question_id) DO NOTHING
+                """, (attempt_id, q["question_id"], auto_marks, auto_marks, feedback))
     return jsonify({"ok": True, "status": "submitted", "auto_submitted": expired})
 
 
