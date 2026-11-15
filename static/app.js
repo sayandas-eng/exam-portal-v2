@@ -1,9 +1,9 @@
 (() => {
   const $ = (s, root=document) => root.querySelector(s);
   const $$ = (s, root=document) => [...root.querySelectorAll(s)];
-  let adminKey = "";
   let exams = [];
   let adminConnected = false;
+  let adminCsrf = "";
   const notice = $("#notice");
   const showNotice = (message, type="info") => {
     notice.textContent = message; notice.className = "notice show " + type;
@@ -11,7 +11,7 @@
   };
   async function api(path, options={}) {
     const headers = {"Content-Type":"application/json", ...(options.headers||{})};
-    if (adminKey) headers["X-Admin-Key"] = adminKey;
+    if (adminConnected && adminCsrf) headers["X-Admin-CSRF"] = adminCsrf;
     const response = await fetch(path, {...options, headers});
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "Something went wrong. Please try again.");
@@ -62,26 +62,38 @@
     exams = data.exams || [];
     renderExams();
   }
-  async function connectAdmin() {
-    const key = $("#admin-key").value.trim();
-    if (!key) return showNotice("Enter your admin access key for this browser session.", "info");
-    $("#connect-button").textContent = "Checking…";
+  async function loginAdmin(event) {
+    event.preventDefault();
+    const button=$("#admin-login-button"), error=$("#admin-lock-error");
+    button.disabled=true; button.textContent="Verifying…"; error.textContent="";
     try {
-      await fetch("/api/admin/session/login", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key})}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||"Login failed");return d;});
-      adminConnected = true; adminKey = "";
-      $("#admin-key").classList.add("hidden"); $("#connect-button").classList.add("hidden"); $("#logout-button").classList.remove("hidden");
-      await loadExams(); showNotice("Admin session active. You won't need to enter the key again until it expires or you log out.", "success");
-    } catch(err) { $("#connect-button").textContent="Unlock"; showNotice(err.message,"error"); }
+      const response=await fetch("/api/admin/session/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:$("#admin-username").value.trim(),password:$("#admin-password").value})});
+      const data=await response.json(); if(!response.ok) throw new Error(data.error||"Login failed");
+      adminConnected=true; adminCsrf=data.csrf_token||"";
+      $("#admin-password").value=""; $("#admin-lock").hidden=true;
+      $("#admin-session-label").textContent="Secure session active";
+      $("#logout-button").classList.remove("hidden");
+      await loadExams(); showNotice("Admin workspace unlocked.", "success");
+    } catch(err) { error.textContent=err.message; }
+    finally { button.disabled=false; button.textContent="Unlock workspace"; }
   }
-  $("#connect-button").addEventListener("click", connectAdmin);
+  $("#admin-login-form").addEventListener("submit",loginAdmin);
   $("#logout-button").addEventListener("click", async () => {
     await fetch("/api/admin/session/logout",{method:"POST"});
-    adminConnected=false; exams=[]; $("#admin-key").classList.remove("hidden"); $("#admin-key").value="";
-    $("#connect-button").classList.remove("hidden"); $("#connect-button").textContent="Unlock"; $("#logout-button").classList.add("hidden"); renderExams();
+    adminConnected=false; adminCsrf=""; exams=[];
+    $("#admin-lock").hidden=false; $("#admin-username").value=""; $("#admin-password").value="";
+    $("#admin-session-label").textContent="Workspace locked";
+    $("#logout-button").classList.add("hidden"); renderExams();
   });
   async function initAdmin() {
-    try { const r=await fetch("/api/admin/session"); const d=await r.json(); adminConnected=!!d.ok; if(adminConnected){$("#admin-key").classList.add("hidden");$("#connect-button").classList.add("hidden");$("#logout-button").classList.remove("hidden");await loadExams();} else renderExams(); }
-    catch(_) { renderExams(); }
+    try {
+      const r=await fetch("/api/admin/session"), d=await r.json();
+      adminConnected=!!d.ok; adminCsrf=d.csrf_token||"";
+      if(adminConnected) {
+        $("#admin-lock").hidden=true; $("#admin-session-label").textContent="Secure session active";
+        $("#logout-button").classList.remove("hidden"); await loadExams();
+      } else { $("#admin-lock").hidden=false; renderExams(); }
+    } catch(_) { $("#admin-lock").hidden=false; renderExams(); }
   }
   $("#refresh-button").addEventListener("click", () => loadExams().catch(err => showNotice(err.message, "error")));
   $("#exam-search").addEventListener("input", renderExams);
