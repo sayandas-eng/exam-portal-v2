@@ -76,22 +76,33 @@ def student_login():
     name = str(data.get("full_name", "")).strip()
     student_class = str(data.get("student_class", "")).strip()
     password = str(data.get("password", ""))
-    common_password = os.getenv("STUDENT_COMMON_PASSWORD", "")
-    if not common_password:
-        app.logger.error("STUDENT_COMMON_PASSWORD is not configured")
-        return error("Student sign-in is temporarily unavailable. Please contact the administrator.", 503)
-    if not name or not student_class or len(name) > 120 or len(student_class) > 60:
-        return error("Enter your student name and class")
-    if not hmac.compare_digest(password, common_password):
-        return error("Incorrect student details or common password", 401)
+    if not name or not student_class or len(name) > 120 or len(student_class) > 60 or not password:
+        return error("Enter your student name, class and examination password")
+    # Each live examination has its own Gemini-generated common password.
+    # Only the password hash is stored; a successful sign-in unlocks that exam.
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, target_class, exam_password_hash
+            FROM portal_v2_exams
+            WHERE status='live' AND exam_password_hash IS NOT NULL
+              AND (target_class IS NULL OR lower(trim(target_class))=lower(trim(%s)))
+            ORDER BY published_at DESC NULLS LAST
+        """, (student_class,))
+        candidates = cur.fetchall()
+    matched_exam = next((exam for exam in candidates
+                         if check_password_hash(exam["exam_password_hash"], password)), None)
+    if not matched_exam:
+        return error("Incorrect student details or examination password", 401)
     session.clear()
     session["student_name"] = name
     session["student_class"] = student_class
+    session["authorized_exam_id"] = str(matched_exam["id"])
     session["csrf_token"] = secrets.token_urlsafe(32)
     session.permanent = True
     return jsonify({
         "ok": True,
         "student": {"full_name": name, "student_class": student_class},
+        "exam_id": session["authorized_exam_id"],
         "csrf_token": session["csrf_token"],
     })
 
@@ -103,7 +114,7 @@ def student_me():
     return jsonify({"ok": True, "student": {
         "full_name": session["student_name"],
         "student_class": session["student_class"]
-    }, "csrf_token": session.get("csrf_token", "")})
+    }, "exam_id": session.get("authorized_exam_id"), "csrf_token": session.get("csrf_token", "")})
 
 
 @app.post("/api/student/logout")
@@ -146,15 +157,17 @@ def health():
 
 @app.get("/api/exams")
 def public_exams():
+    if not student_required() or not session.get("authorized_exam_id"):
+        return error("Student sign-in required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT id, title, subject, target_class, topic, difficulty,
                    duration_minutes, review_minutes, total_marks, published_at,
-                   (exam_password_hash IS NOT NULL) AS has_password
+                   true AS has_password
             FROM portal_v2_exams
-            WHERE status = 'live'
+            WHERE status = 'live' AND id=%s
             ORDER BY published_at DESC NULLS LAST
-        """)
+        """, (session["authorized_exam_id"],))
         return jsonify({"ok": True, "exams": cur.fetchall()})
 
 
@@ -241,6 +254,10 @@ def publish_exam(exam_id):
         cur.execute("SELECT COUNT(*) AS n FROM portal_v2_questions WHERE exam_id=%s", (exam_id,))
         if cur.fetchone()["n"] == 0:
             return error("An exam must contain questions before publishing")
+        cur.execute("SELECT exam_password_hash FROM portal_v2_exams WHERE id=%s", (exam_id,))
+        password_row = cur.fetchone()
+        if not password_row or not password_row["exam_password_hash"]:
+            return error("Set a Gemini-generated common password before publishing this exam")
         cur.execute("""
             UPDATE portal_v2_exams SET status='live', published_at=now()
             WHERE id=%s AND status IN ('draft','paused') RETURNING id
@@ -268,12 +285,10 @@ def start_exam(exam_id):
         exam = cur.fetchone()
         if not exam:
             return error("Exam not found or not currently live", 404)
+        if str(exam["id"]) != str(session.get("authorized_exam_id")):
+            return error("Sign in with the common password for this examination", 403)
         if exam["target_class"] and exam["target_class"].strip().lower() != student_class.lower():
             return error("This exam is not assigned to the supplied class", 403)
-        if exam["exam_password_hash"] and not check_password_hash(
-            exam["exam_password_hash"], str(data.get("exam_password", ""))
-        ):
-            return error("Incorrect exam password", 403)
         session_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
         exam_deadline = now + timedelta(minutes=exam["duration_minutes"])
