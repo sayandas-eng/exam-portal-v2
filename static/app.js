@@ -50,7 +50,7 @@
       const canPublish = e.status === "draft" || e.status === "paused";
       return '<tr><td><div class="exam-title">'+escapeHtml(e.title)+'</div><div class="exam-subtitle">'+escapeHtml(e.topic||"")+(e.target_class ? " · "+escapeHtml(e.target_class) : "")+'</div></td>'+
         '<td>'+escapeHtml(e.subject)+'</td><td>'+Number(e.question_count||0)+'</td><td>'+Number(e.duration_minutes)+' min</td><td>'+Number(e.total_marks)+'</td>'+
-        '<td><span class="status-pill '+statusClass+'">'+escapeHtml(e.status)+'</span></td><td>'+(canPublish?'<button class="row-action" data-publish="'+e.id+'">Publish</button>':"—")+'</td></tr>';
+        '<td><span class="status-pill '+statusClass+'">'+escapeHtml(e.status)+'</span></td><td><div class="row-actions">'+(canPublish?'<button class="row-action" data-publish="'+e.id+'">Publish</button>':'')+'<button class="row-action row-delete" data-delete="'+e.id+'">Delete</button></div></td></tr>';
     }).join("");
   }
   function escapeHtml(value) {
@@ -101,6 +101,22 @@
   $("#new-exam-button").addEventListener("click", () => setView("create"));
   $$("[data-view]").forEach(b => b.addEventListener("click", () => setView(b.dataset.view)));
   $("#exam-table-body").addEventListener("click", async e => {
+    const deleteButton = e.target.closest("[data-delete]");
+    if (deleteButton) {
+      const exam = exams.find(item => item.id === deleteButton.dataset.delete);
+      const title = exam?.title || "this examination";
+      if (!window.confirm('Remove "'+title+'" from the exam workspace now? Student attempts, answers and released results will be preserved.')) return;
+      deleteButton.disabled = true; deleteButton.textContent = "Deleting…";
+      try {
+        await api("/api/admin/exams/"+deleteButton.dataset.delete+"/delete",{method:"POST",body:"{}"});
+        showNotice("Exam removed. Student records and results have been preserved.", "success");
+        await loadExams();
+      } catch(err) {
+        deleteButton.disabled=false; deleteButton.textContent="Delete";
+        showNotice(err.message,"error");
+      }
+      return;
+    }
     const button = e.target.closest("[data-publish]");
     if (!button) return;
     if (!window.confirm("Publish this examination? Students will be able to see it.")) return;
