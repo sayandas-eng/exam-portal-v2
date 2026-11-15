@@ -23,6 +23,8 @@ app.config.update(
 limiter = Limiter(get_remote_address, app=app, default_limits=[], storage_uri="memory://")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
+ADMIN_LOGIN_USERNAME = os.getenv("ADMIN_LOGIN_USERNAME", "")
+ADMIN_LOGIN_PASSWORD = os.getenv("ADMIN_LOGIN_PASSWORD", "")
 STUDENT_EXAM_PASSWORD = os.getenv("STUDENT_EXAM_PASSWORD", "")
 
 
@@ -75,22 +77,28 @@ def admin_portal():
 @app.post("/api/admin/session/login")
 @limiter.limit("8 per minute")
 def admin_session_login():
-    supplied = str((request.get_json(silent=True) or {}).get("key", ""))
-    if not ADMIN_API_KEY or not supplied or not hmac.compare_digest(supplied, ADMIN_API_KEY):
-        return error("Invalid admin access key", 401)
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username", "")).strip()
+    password = str(data.get("password", ""))
+    valid_user = bool(ADMIN_LOGIN_USERNAME and username and hmac.compare_digest(username, ADMIN_LOGIN_USERNAME))
+    valid_password = bool(ADMIN_LOGIN_PASSWORD and password and hmac.compare_digest(password, ADMIN_LOGIN_PASSWORD))
+    if not (valid_user and valid_password):
+        return error("Incorrect admin username or password", 401)
+    session.clear()
     session["admin_authenticated"] = True
+    session["admin_csrf_token"] = secrets.token_urlsafe(32)
     session.permanent = True
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "csrf_token": session["admin_csrf_token"]})
 
 
 @app.get("/api/admin/session")
 def admin_session_status():
-    return jsonify({"ok": bool(session.get("admin_authenticated"))})
+    return jsonify({"ok": bool(session.get("admin_authenticated")), "csrf_token": session.get("admin_csrf_token", "")})
 
 
 @app.post("/api/admin/session/logout")
 def admin_session_logout():
-    session.pop("admin_authenticated", None)
+    session.clear()
     return jsonify({"ok": True})
 
 
@@ -109,7 +117,7 @@ def normalize_student_class(value):
 def protect_student_mutations():
     if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
         return None
-    if request.endpoint == "student_login" or not student_required():
+    if request.endpoint == "student_login" or request.endpoint in ("admin_session_login", "admin_session_logout") or not student_required():
         return None
     if request.path.startswith(("/api/student/", "/api/exams/", "/api/attempts/")):
         expected = session.get("csrf_token", "")
