@@ -1,5 +1,13 @@
 import os
-import encodings.idna  # Ensure Werkzeug's IDNA hostname codec is registered on minimal Python images.
+import codecs
+import encodings.idna
+# Some minimal Python 3.14 images fail to register the standard IDNA codec.
+# Render hostnames arrive as ASCII/punycode, so an ASCII fallback is safe.
+try:
+    codecs.lookup("idna")
+except LookupError:
+    codecs.register(lambda name: codecs.lookup("ascii") if name.replace("-", "_") == "idna" else None)
+    codecs.lookup("idna")
 import uuid
 import hmac
 import secrets
