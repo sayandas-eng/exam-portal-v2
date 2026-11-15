@@ -1,4 +1,5 @@
 import os
+import encodings.idna  # Ensure Werkzeug's IDNA hostname codec is registered on minimal Python images.
 import uuid
 import hmac
 import secrets
