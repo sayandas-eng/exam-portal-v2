@@ -397,8 +397,7 @@ def create_exam():
                     VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, %s)
                 """, (exam_id, index, qtype, q["prompt"],
                       __import__("json").dumps(q.get("options")) if q.get("options") is not None else None,
-                      q.get("correct_option"), q.get("expected_answer", ""),                      __import__("json").dumps(q.get("marking_scheme", {})),
-                      float(q.get("marks", 1))))
+                      q.get("correct_option"), q.get("expected_answer", ""),                      __import__("json").dumps(q.get("marking_scheme", {})),                      float(q.get("marks", 1))))
             cur.execute("""
                 INSERT INTO portal_v2_audit_log (actor, action, entity_type, entity_id, details)
                 VALUES ('admin', 'exam_created', 'exam', %s, %s::jsonb)
@@ -797,8 +796,7 @@ def teacher_portal():
 @app.get("/api/admin/attempts")
 def admin_list_attempts():
     if not admin_required():        return error("Admin authentication required", 401)
-    with db() as conn, conn.cursor() as cur:
-        cur.execute("""
+    with db() as conn, conn.cursor() as cur:        cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
                    a.started_at, a.submitted_at, e.id AS exam_id,
                    e.title AS exam_title, e.subject, e.total_marks,
@@ -853,8 +851,8 @@ def evaluate_attempt(attempt_id):
     data = request.get_json(silent=True) or {}
     evaluations = data.get("evaluations")
     reviewer = str(data.get("reviewer", "Teacher")).strip()[:120] or "Teacher"
-    if not isinstance(evaluations, list) or not evaluations:
-        return error("At least one evaluation is required")
+    if not isinstance(evaluations, list):
+        return error("Evaluations must be provided as a list")
     try:
         with db() as conn, conn.cursor() as cur:
             cur.execute("SELECT status FROM portal_v2_attempts WHERE id=%s FOR UPDATE", (attempt_id,))
