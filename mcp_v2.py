@@ -6,12 +6,15 @@ MCP_API_TOKEN, PORTAL_BASE_URL
 """
 import html
 import os
+import json
 import re
 import secrets
 import time
 from typing import Any
 
 import requests
+import psycopg
+from psycopg.rows import dict_row
 from pydantic import AnyHttpUrl
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
@@ -30,11 +33,12 @@ API_TOKEN = os.environ.get("MCP_API_TOKEN", "")
 LOGIN_USER = os.environ.get("MCP_LOGIN_USERNAME", "")
 LOGIN_PASS = os.environ.get("MCP_LOGIN_PASSWORD", "")
 PUBLIC_URL = os.environ.get("MCP_PUBLIC_URL", "").rstrip("/")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("PORT", "10000"))
 
-if not all((BASE, API_TOKEN, LOGIN_USER, LOGIN_PASS, PUBLIC_URL)):
-    raise RuntimeError("Set MCP_API_TOKEN, MCP_LOGIN_USERNAME, MCP_LOGIN_PASSWORD and MCP_PUBLIC_URL.")
+if not all((BASE, API_TOKEN, LOGIN_USER, LOGIN_PASS, PUBLIC_URL, DATABASE_URL)):
+    raise RuntimeError("Set MCP_API_TOKEN, MCP_LOGIN_USERNAME, MCP_LOGIN_PASSWORD, MCP_PUBLIC_URL and DATABASE_URL.")
 
 class PortalOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, RefreshToken, AccessToken]):
     """OAuth provider with dynamic client registration and PKCE."""
@@ -43,6 +47,20 @@ class PortalOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, Re
         self.codes: dict[str, AuthorizationCode] = {}
         self.tokens: dict[str, AccessToken] = {}
         self.states: dict[str, dict[str, Any]] = {}
+        # Persist Gemini's dynamic OAuth client registration across service restarts.
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS portal_v2_mcp_oauth_clients (
+                    client_id TEXT PRIMARY KEY,
+                    client_info JSONB NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            rows = conn.execute(
+                "SELECT client_id, client_info FROM portal_v2_mcp_oauth_clients"
+            ).fetchall()
+        for row in rows:
+            self.clients[row["client_id"]] = OAuthClientInformationFull.model_validate(row["client_info"])
 
     async def get_client(self, client_id: str):
         return self.clients.get(client_id)
@@ -50,6 +68,14 @@ class PortalOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, Re
     async def register_client(self, client_info: OAuthClientInformationFull):
         if not client_info.client_id:
             raise ValueError("Missing OAuth client ID")
+        payload = client_info.model_dump(mode="json", exclude_none=True)
+        with psycopg.connect(DATABASE_URL) as conn:
+            conn.execute(
+                """INSERT INTO portal_v2_mcp_oauth_clients (client_id, client_info)
+                   VALUES (%s, %s::jsonb)
+                   ON CONFLICT (client_id) DO UPDATE SET client_info = EXCLUDED.client_info""",
+                (client_info.client_id, json.dumps(payload)),
+            )
         self.clients[client_info.client_id] = client_info
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
