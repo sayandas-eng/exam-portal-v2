@@ -23,12 +23,16 @@ app.config.update(
 limiter = Limiter(get_remote_address, app=app, default_limits=[], storage_uri="memory://")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
+STUDENT_EXAM_PASSWORD = os.getenv("STUDENT_EXAM_PASSWORD", "")
 
 
 def db():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not configured")
-    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS availability_days INTEGER NOT NULL DEFAULT 3")
+    conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_until TIMESTAMPTZ")
+    return conn
 
 
 def admin_required():
@@ -36,7 +40,7 @@ def admin_required():
     valid_admin = bool(ADMIN_API_KEY and supplied and hmac.compare_digest(supplied, ADMIN_API_KEY))
     mcp_token = os.getenv("MCP_API_TOKEN", "")
     valid_mcp = bool(mcp_token and supplied and hmac.compare_digest(supplied, mcp_token))
-    return valid_admin or valid_mcp
+    return valid_admin or valid_mcp or bool(session.get("admin_authenticated"))
 
 
 def error(message, status=400):
@@ -56,8 +60,29 @@ def student_portal():
 
 @app.get("/admin")
 def admin_portal():
-    # Keep the administration dashboard on its own explicit URL.
     return render_template("index.html")
+
+
+@app.post("/api/admin/session/login")
+@limiter.limit("8 per minute")
+def admin_session_login():
+    supplied = str((request.get_json(silent=True) or {}).get("key", ""))
+    if not ADMIN_API_KEY or not supplied or not hmac.compare_digest(supplied, ADMIN_API_KEY):
+        return error("Invalid admin access key", 401)
+    session["admin_authenticated"] = True
+    session.permanent = True
+    return jsonify({"ok": True})
+
+
+@app.get("/api/admin/session")
+def admin_session_status():
+    return jsonify({"ok": bool(session.get("admin_authenticated"))})
+
+
+@app.post("/api/admin/session/logout")
+def admin_session_logout():
+    session.pop("admin_authenticated", None)
+    return jsonify({"ok": True})
 
 
 
@@ -94,21 +119,13 @@ def student_login():
     password = str(data.get("password", ""))
     if not name or not student_class or len(name) > 120 or len(student_class) > 60 or not password:
         return error("Enter your student name, class and examination password")
-    # Each live examination has its own Gemini-generated common password.
-    # Only the password hash is stored; a successful sign-in unlocks that exam.
+    if not STUDENT_EXAM_PASSWORD or not hmac.compare_digest(password, STUDENT_EXAM_PASSWORD):
+        return error("Incorrect examination password", 401)
     with db() as conn, conn.cursor() as cur:
-        cur.execute("""
-            SELECT id, target_class, exam_password_hash
-            FROM portal_v2_exams
-            WHERE status='live' AND exam_password_hash IS NOT NULL
-              AND (target_class IS NULL OR lower(regexp_replace(trim(target_class), '^class\\s*', '', 'i'))=lower(regexp_replace(trim(%s), '^class\\s*', '', 'i')))
-            ORDER BY published_at DESC NULLS LAST
-        """, (student_class,))
-        candidates = cur.fetchall()
-    matched_exam = next((exam for exam in candidates
-                         if check_password_hash(exam["exam_password_hash"], password)), None)
+        cur.execute("SELECT id FROM portal_v2_exams WHERE status='live' AND available_until > now() ORDER BY published_at DESC LIMIT 1")
+        matched_exam = cur.fetchone()
     if not matched_exam:
-        return error("Incorrect student details or examination password", 401)
+        return error("There are no examinations currently open.", 403)
     session.clear()
     session["student_name"] = name
     session["student_class"] = student_class
@@ -179,11 +196,11 @@ def public_exams():
         cur.execute("""
             SELECT id, title, subject, target_class, topic, difficulty,
                    duration_minutes, review_minutes, total_marks, published_at,
-                   true AS has_password
+                   available_until, true AS has_password
             FROM portal_v2_exams
-            WHERE status = 'live' AND id=%s
+            WHERE status = 'live' AND available_until > now()
             ORDER BY published_at DESC NULLS LAST
-        """, (session["authorized_exam_id"],))
+        """)
         return jsonify({"ok": True, "exams": cur.fetchall()})
 
 
@@ -196,6 +213,7 @@ def admin_list_exams():
             SELECT e.id, e.title, e.subject, e.target_class, e.topic,
                    e.difficulty, e.status, e.duration_minutes, e.review_minutes,
                    e.total_marks, e.created_at, e.published_at,
+                   e.availability_days, e.available_until,
                    COUNT(q.id)::int AS question_count
             FROM portal_v2_exams e
             LEFT JOIN portal_v2_questions q ON q.exam_id=e.id
@@ -224,16 +242,21 @@ def create_exam():
             return error("Duration must be 1–300 minutes; review time 0–120")
         total = sum(float(q.get("marks", 1)) for q in questions)
         exam_id = str(uuid.uuid4())
-        password_hash = generate_password_hash(data["exam_password"]) if data.get("exam_password") else None
+        if not STUDENT_EXAM_PASSWORD:
+            return error("STUDENT_EXAM_PASSWORD is not configured on the server", 500)
+        password_hash = generate_password_hash(STUDENT_EXAM_PASSWORD)
+        availability_days = int(data.get("availability_days", 3))
+        if not 1 <= availability_days <= 30:
+            return error("Availability must be between 1 and 30 days")
         with db() as conn, conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO portal_v2_exams
                 (id, title, subject, target_class, topic, difficulty, status,
-                 exam_password_hash, duration_minutes, review_minutes, total_marks)
-                VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s)
+                 exam_password_hash, duration_minutes, review_minutes, total_marks, availability_days)
+                VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s)
             """, (exam_id, data["title"], data["subject"], data.get("target_class"),
                   data["topic"], data.get("difficulty", "moderate"), password_hash,
-                  duration, review, total))
+                  duration, review, total, availability_days))
             for index, q in enumerate(questions, start=1):
                 qtype = q.get("question_type", "mcq")
                 if qtype not in ("mcq", "saq", "laq"):
@@ -270,12 +293,15 @@ def publish_exam(exam_id):
         cur.execute("SELECT COUNT(*) AS n FROM portal_v2_questions WHERE exam_id=%s", (exam_id,))
         if cur.fetchone()["n"] == 0:
             return error("An exam must contain questions before publishing")
-        cur.execute("SELECT exam_password_hash FROM portal_v2_exams WHERE id=%s", (exam_id,))
+        cur.execute("SELECT exam_password_hash, availability_days FROM portal_v2_exams WHERE id=%s", (exam_id,))
         password_row = cur.fetchone()
+        availability_days = password_row["availability_days"] if password_row else 3
         if not password_row or not password_row["exam_password_hash"]:
-            return error("Set a Gemini-generated common password before publishing this exam")
+            return error("The fixed student password is not configured for this exam", 500)
         cur.execute("""
-            UPDATE portal_v2_exams SET status='live', published_at=now()
+            UPDATE portal_v2_exams
+            SET status='live', published_at=now(),
+                available_until=now() + (availability_days || ' days')::interval
             WHERE id=%s AND status IN ('draft','paused') RETURNING id
         """, (exam_id,))
         if not cur.fetchone():
@@ -295,20 +321,18 @@ def start_exam(exam_id):
     with db() as conn, conn.cursor() as cur:
         name, student_class = session["student_name"], session["student_class"]
         cur.execute("""
-            SELECT id, target_class, exam_password_hash, duration_minutes, review_minutes
-            FROM portal_v2_exams WHERE id=%s AND status='live'
+            SELECT id, target_class, exam_password_hash, duration_minutes, review_minutes, available_until
+            FROM portal_v2_exams WHERE id=%s AND status='live' AND available_until > now()
         """, (exam_id,))
         exam = cur.fetchone()
         if not exam:
             return error("Exam not found or not currently live", 404)
-        if str(exam["id"]) != str(session.get("authorized_exam_id")):
-            return error("Sign in with the common password for this examination", 403)
-        if exam["target_class"] and normalize_student_class(exam["target_class"]).lower() != normalize_student_class(student_class).lower():
-            return error("This exam is not assigned to the supplied class", 403)
+        if exam["available_until"] <= datetime.now(timezone.utc):
+            return error("This examination's availability window has closed.", 403)
         session_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
-        exam_deadline = now + timedelta(minutes=exam["duration_minutes"])
-        review_deadline = exam_deadline + timedelta(minutes=exam["review_minutes"])
+        exam_deadline = min(now + timedelta(minutes=exam["duration_minutes"]), exam["available_until"])
+        review_deadline = min(exam_deadline + timedelta(minutes=exam["review_minutes"]), exam["available_until"])
         cur.execute("""
             INSERT INTO portal_v2_attempts
             (exam_id, student_name, student_class, student_session_id,
@@ -333,7 +357,7 @@ def resume_attempt(attempt_id):
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT a.id, a.status, a.exam_deadline, a.review_deadline,
-                   e.id AS exam_id, e.title, e.subject, e.topic
+                   e.id AS exam_id, e.title, e.subject, e.topic, e.available_until, e.status AS exam_status
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE a.id=%s AND a.student_name=%s AND a.student_class=%s
@@ -345,6 +369,10 @@ def resume_attempt(attempt_id):
         if attempt["status"] != "in_progress":
             return error("This attempt is no longer in progress", 409)
         now = datetime.now(timezone.utc)
+        if attempt["exam_status"] != "live" or now >= attempt["available_until"]:
+            cur.execute("UPDATE portal_v2_attempts SET status='submitted', submitted_at=now() WHERE id=%s AND status='in_progress'", (attempt_id,))
+            cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
+            return error("The examination availability window has closed.", 409)
         if now > attempt["review_deadline"]:
             cur.execute("""
                 UPDATE portal_v2_attempts
@@ -375,9 +403,10 @@ def save_answer(attempt_id, question_id):
     selected_option = data.get("selected_option")
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT a.status, a.review_deadline, q.id
+            SELECT a.status, a.review_deadline, q.id, e.available_until, e.status AS exam_status
             FROM portal_v2_attempts a
             JOIN portal_v2_questions q ON q.exam_id=a.exam_id
+            JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE a.id=%s AND q.id=%s AND a.student_name=%s AND a.student_class=%s
             FOR UPDATE OF a
         """, (attempt_id, question_id, session["student_name"], session["student_class"]))
@@ -386,6 +415,10 @@ def save_answer(attempt_id, question_id):
             return error("Attempt or question not found", 404)
         if row["status"] != "in_progress":
             return error("The answer window has closed", 409)
+        if row["exam_status"] != "live" or datetime.now(timezone.utc) >= row["available_until"]:
+            cur.execute("UPDATE portal_v2_attempts SET status='submitted', submitted_at=now() WHERE id=%s AND status='in_progress'", (attempt_id,))
+            cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
+            return error("The examination availability window has closed.", 409)
         if datetime.now(timezone.utc) > row["review_deadline"]:
             cur.execute("""
                 UPDATE portal_v2_attempts
@@ -412,15 +445,16 @@ def submit_attempt(attempt_id):
         return error("Student sign-in required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT status, review_deadline FROM portal_v2_attempts
-            WHERE id=%s AND student_name=%s AND student_class=%s FOR UPDATE
+            SELECT a.status, a.review_deadline, e.available_until, e.status AS exam_status
+            FROM portal_v2_attempts a JOIN portal_v2_exams e ON e.id=a.exam_id
+            WHERE a.id=%s AND a.student_name=%s AND a.student_class=%s FOR UPDATE OF a
         """, (attempt_id, session["student_name"], session["student_class"]))
         row = cur.fetchone()
         if not row:
             return error("Attempt not found", 404)
         if row["status"] != "in_progress":
             return error("Attempt already submitted", 409)
-        expired = datetime.now(timezone.utc) > row["review_deadline"]
+        expired = (datetime.now(timezone.utc) >= row["available_until"] or row["exam_status"] != "live" or datetime.now(timezone.utc) > row["review_deadline"])
         cur.execute("""
             UPDATE portal_v2_attempts SET status='submitted', submitted_at=now()
             WHERE id=%s AND student_name=%s AND student_class=%s AND status='in_progress'
