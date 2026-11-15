@@ -302,6 +302,47 @@ def start_exam(exam_id):
         return jsonify({"ok": True, "attempt": attempt, "questions": cur.fetchall()}), 201
 
 
+
+
+@app.get("/api/attempts/<attempt_id>/resume")
+def resume_attempt(attempt_id):
+    if not student_required():
+        return error("Student sign-in required", 401)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT a.id, a.status, a.exam_deadline, a.review_deadline,
+                   e.id AS exam_id, e.title, e.subject, e.topic
+            FROM portal_v2_attempts a
+            JOIN portal_v2_exams e ON e.id=a.exam_id
+            WHERE a.id=%s AND a.student_user_id=%s
+            FOR UPDATE OF a
+        """, (attempt_id, session["student_user_id"]))
+        attempt = cur.fetchone()
+        if not attempt:
+            return error("Attempt not found", 404)
+        if attempt["status"] != "in_progress":
+            return error("This attempt is no longer in progress", 409)
+        now = datetime.now(timezone.utc)
+        if now > attempt["review_deadline"]:
+            cur.execute("""
+                UPDATE portal_v2_attempts
+                SET status='submitted', submitted_at=review_deadline
+                WHERE id=%s AND status='in_progress'
+            """, (attempt_id,))
+            return error("The answer window has closed. Your saved answers have been submitted.", 409)
+        cur.execute("""
+            SELECT q.id, q.position, q.question_type, q.prompt, q.options, q.marks,
+                   ans.answer_text, ans.selected_option
+            FROM portal_v2_questions q
+            LEFT JOIN portal_v2_answers ans
+              ON ans.question_id=q.id AND ans.attempt_id=%s
+            WHERE q.exam_id=%s
+            ORDER BY q.position
+        """, (attempt_id, attempt["exam_id"]))
+        questions = cur.fetchall()
+    return jsonify({"ok": True, "attempt": attempt, "questions": questions})
+
+
 @app.put("/api/attempts/<attempt_id>/answers/<question_id>")
 def save_answer(attempt_id, question_id):
     if not student_required():
