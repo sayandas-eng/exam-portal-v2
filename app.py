@@ -43,6 +43,9 @@ def db():
         conn.execute("""UPDATE portal_v2_exams
                         SET available_until = published_at + (availability_days::text || ' days')::interval
                         WHERE status='live' AND available_until IS NULL AND published_at IS NOT NULL""")
+        conn.execute("""UPDATE portal_v2_exams
+                        SET available_from = published_at
+                        WHERE status='live' AND available_from IS NULL AND published_at IS NOT NULL""")
         SCHEMA_READY = True
     return conn
 
@@ -145,7 +148,7 @@ def student_login():
     if not STUDENT_EXAM_PASSWORD or not hmac.compare_digest(password, STUDENT_EXAM_PASSWORD):
         return error("Incorrect examination password", 401)
     with db() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id FROM portal_v2_exams WHERE status='live' AND available_until > now() ORDER BY published_at DESC LIMIT 1")
+        cur.execute("SELECT id FROM portal_v2_exams WHERE status='live' AND available_from <= now() AND available_until > now() ORDER BY published_at DESC LIMIT 1")
         matched_exam = cur.fetchone()
     if not matched_exam:
         return error("There are no examinations currently open.", 403)
@@ -371,7 +374,7 @@ def start_exam(exam_id):
     with db() as conn, conn.cursor() as cur:
         name, student_class = session["student_name"], session["student_class"]
         cur.execute("""
-            SELECT id, target_class, exam_password_hash, duration_minutes, review_minutes, available_until
+            SELECT id, target_class, exam_password_hash, duration_minutes, review_minutes, available_from, available_until
             FROM portal_v2_exams WHERE id=%s AND status='live' AND available_from <= now() AND available_until > now()
         """, (exam_id,))
         exam = cur.fetchone()
@@ -407,7 +410,7 @@ def resume_attempt(attempt_id):
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT a.id, a.status, a.exam_deadline, a.review_deadline,
-                   e.id AS exam_id, e.title, e.subject, e.topic, e.available_until, e.status AS exam_status
+                   e.id AS exam_id, e.title, e.subject, e.topic, e.available_from, e.available_until, e.status AS exam_status
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE a.id=%s AND a.student_name=%s AND a.student_class=%s
@@ -453,7 +456,7 @@ def save_answer(attempt_id, question_id):
     selected_option = data.get("selected_option")
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT a.status, a.review_deadline, q.id, e.available_until, e.status AS exam_status
+            SELECT a.status, a.review_deadline, q.id, e.available_from, e.available_until, e.status AS exam_status
             FROM portal_v2_attempts a
             JOIN portal_v2_questions q ON q.exam_id=a.exam_id
             JOIN portal_v2_exams e ON e.id=a.exam_id
@@ -465,7 +468,7 @@ def save_answer(attempt_id, question_id):
             return error("Attempt or question not found", 404)
         if row["status"] != "in_progress":
             return error("The answer window has closed", 409)
-        if row["exam_status"] != "live" or datetime.now(timezone.utc) >= row["available_until"]:
+        if row["exam_status"] != "live" or datetime.now(timezone.utc) < row["available_from"] or datetime.now(timezone.utc) >= row["available_until"]:
             cur.execute("UPDATE portal_v2_attempts SET status='submitted', submitted_at=now() WHERE id=%s AND status='in_progress'", (attempt_id,))
             cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
             return error("The examination availability window has closed.", 409)
@@ -495,7 +498,7 @@ def submit_attempt(attempt_id):
         return error("Student sign-in required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT a.status, a.review_deadline, e.available_until, e.status AS exam_status
+            SELECT a.status, a.review_deadline, e.available_from, e.available_until, e.status AS exam_status
             FROM portal_v2_attempts a JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE a.id=%s AND a.student_name=%s AND a.student_class=%s FOR UPDATE OF a
         """, (attempt_id, session["student_name"], session["student_class"]))
