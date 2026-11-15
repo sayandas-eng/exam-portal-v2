@@ -397,8 +397,7 @@ def create_exam():
                     VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, %s)
                 """, (exam_id, index, qtype, q["prompt"],
                       __import__("json").dumps(q.get("options")) if q.get("options") is not None else None,
-                      q.get("correct_option"), q.get("expected_answer", ""),
-                      __import__("json").dumps(q.get("marking_scheme", {})),
+                      q.get("correct_option"), q.get("expected_answer", ""),                      __import__("json").dumps(q.get("marking_scheme", {})),
                       float(q.get("marks", 1))))
             cur.execute("""
                 INSERT INTO portal_v2_audit_log (actor, action, entity_type, entity_id, details)
@@ -670,8 +669,8 @@ def _auto_mark_saq(answer, expected_answer, marking_scheme, maximum_marks):
     if expected:
         if normalized == expected:
             return float(maximum_marks), "Automatically marked: the answer matches the expected answer."
-        return None
-    return None
+        return 0.0, "Automatically marked: the answer did not match the expected answer."
+    return 0.0, "Automatically marked 0: no answer key or marking criteria were supplied."
 
 
 @app.post("/api/attempts/<attempt_id>/submit")
@@ -797,17 +796,16 @@ def teacher_portal():
 
 @app.get("/api/admin/attempts")
 def admin_list_attempts():
-    if not admin_required():
-        return error("Admin authentication required", 401)
+    if not admin_required():        return error("Admin authentication required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
                    a.started_at, a.submitted_at, e.id AS exam_id,
-                   e.title AS exam_title, e.subject,
-                   COUNT(ans.id)::int AS answered_count
+                   e.title AS exam_title, e.subject, e.total_marks,
+                   COALESCE(SUM(ev.final_marks), 0)::float AS obtained_marks
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
-            LEFT JOIN portal_v2_answers ans ON ans.attempt_id=a.id
+            LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
             GROUP BY a.id, e.id
             ORDER BY a.submitted_at DESC NULLS LAST, a.started_at DESC
         """)
@@ -872,6 +870,10 @@ def evaluate_attempt(attempt_id):
                 qid = str(item.get("question_id", ""))
                 if qid not in maxima or qid in seen:
                     return error("Invalid or duplicate question in evaluation")
+                cur.execute("SELECT question_type FROM portal_v2_questions WHERE id=%s", (qid,))
+                question_type = cur.fetchone()["question_type"]
+                if question_type != "laq":
+                    return error("Only LAQ answers can be manually marked. MCQs and SAQs are auto-marked.")
                 seen.add(qid)
                 marks = float(item.get("final_marks", 0))
                 if marks < 0 or marks > maxima[qid]:
@@ -888,12 +890,16 @@ def evaluate_attempt(attempt_id):
                       reviewed_by=EXCLUDED.reviewed_by,
                       reviewed_at=now(), updated_at=now()
                 """, (attempt_id, qid, marks, feedback, reviewer))
-            cur.execute("SELECT COUNT(*) AS n FROM portal_v2_questions q JOIN portal_v2_attempts a ON a.exam_id=q.exam_id WHERE a.id=%s", (attempt_id,))
-            total_questions = cur.fetchone()["n"]
-            cur.execute("SELECT COUNT(*) AS n FROM portal_v2_evaluations WHERE attempt_id=%s", (attempt_id,))
+            cur.execute("SELECT COUNT(*) AS n FROM portal_v2_questions q JOIN portal_v2_attempts a ON a.exam_id=q.exam_id WHERE a.id=%s AND q.question_type='laq'", (attempt_id,))
+            total_manual = cur.fetchone()["n"]
+            cur.execute("""
+                SELECT COUNT(*) AS n FROM portal_v2_evaluations ev
+                JOIN portal_v2_questions q ON q.id=ev.question_id
+                WHERE ev.attempt_id=%s AND q.question_type='laq'
+            """, (attempt_id,))
             reviewed = cur.fetchone()["n"]
-            if reviewed < total_questions:
-                return error("Save marks for every question before finalising the result")
+            if reviewed < total_manual:
+                return error("Save marks for every LAQ before finalising the result")
             cur.execute("UPDATE portal_v2_attempts SET status='evaluated', evaluated_at=now() WHERE id=%s", (attempt_id,))
             cur.execute("""
                 INSERT INTO portal_v2_audit_log (actor, action, entity_type, entity_id)
