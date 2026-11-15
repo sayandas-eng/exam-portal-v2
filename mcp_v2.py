@@ -230,10 +230,9 @@ mcp = FastMCP(
     name="Exam Portal V2",
     instructions=(
         "You are connected to the NEW Exam Portal V2 only. When the teacher asks for an exam, "
-        "generate the question paper and answer key, then generate a NEW strong common password "
-        "for that exam (at least 16 characters, uppercase, lowercase, digit and symbol). "
-        "Pass that exact password to create_and_publish_exam and return it to the teacher. "
-        "Never reuse a previous exam password. Students sign in with name, class and this password. "
+        "generate the question paper and answer key, then publish it with the fixed student password "
+        "configured securely on the portal. Never create student IDs or passwords, and never reveal "
+        "the fixed password in responses. Students sign in with their own name, class and the shared password. "
         "Do not call or use the legacy V1 portal."
     ),
     host=HOST, port=PORT, auth_server_provider=provider, auth=auth,
@@ -282,25 +281,20 @@ def create_and_publish_exam(
     topic: str,
     class_level: str = "Any Class",
     questions_json: str = "",
-    common_password: str = "",
+    availability_days: int = 3,
     duration_minutes: int = 45,
     review_minutes: int = 0,
     difficulty: str = "moderate",
 ) -> dict:
-    """Create and publish an examination in Exam Portal V2. Gemini must first generate a fresh unique strong common_password (minimum 16 characters with uppercase, lowercase, number and symbol) and include it here. questions_json is a JSON array of objects with prompt, question_type (mcq, saq or laq), marks, options and correct_option for MCQs, or expected_answer and marking_scheme for written questions. Supports aliases question/type/answer. The tool creates a draft, publishes it, and returns the common password once for the teacher to distribute. Students sign in with name, class and this password."""
+    """Create and publish an examination in Exam Portal V2. Gemini generates the complete paper and answer key. availability_days controls how many days the exam remains open after publication (1–30, default 3). The portal applies its fixed shared student password securely; do not generate, request or disclose passwords or student IDs. Students enter their own name and class."""
     display_class = str(class_level or "Any Class").strip() or "Any Class"
     normalized_class = normalize_class(display_class)
     if not title.strip() or not subject.strip() or not topic.strip():
         raise ValueError("Title, subject and topic are required.")
     if not 1 <= int(duration_minutes) <= 300 or not 0 <= int(review_minutes) <= 120:
         raise ValueError("Duration must be 1–300 minutes and review time 0–120 minutes.")
-    if len(common_password) < 16 or not all((
-        re.search(r"[A-Z]", common_password),
-        re.search(r"[a-z]", common_password),
-        re.search(r"\d", common_password),
-        re.search(r"[^A-Za-z0-9]", common_password),
-    )):
-        raise ValueError("Gemini must generate a strong password of at least 16 characters including uppercase, lowercase, a number and a symbol.")
+    if not 1 <= int(availability_days) <= 30:
+        raise ValueError("availability_days must be between 1 and 30.")
     try:
         raw_questions = __import__("json").loads(questions_json)
     except Exception as exc:
@@ -346,7 +340,7 @@ def create_and_publish_exam(
         "title": title, "subject": subject, "topic": topic,
         "target_class": normalized_class, "difficulty": difficulty,
         "duration_minutes": int(duration_minutes), "review_minutes": int(review_minutes),
-        "exam_password": common_password, "questions": questions,
+        "availability_days": int(availability_days), "questions": questions,
     })
     exam_id = created["exam_id"]
     published = portal_call("POST", f"/api/admin/exams/{exam_id}/publish", json={})
@@ -355,9 +349,10 @@ def create_and_publish_exam(
         "class_level": display_class, "status": published.get("status", "live"),
         "question_count": created.get("question_count"),
         "total_marks": created.get("total_marks"),
-        "common_password": common_password,
+        "availability_days": int(availability_days),
+        "available_until": published.get("available_until"),
         "student_portal": BASE + "/",
-        "message": "Exam published. Share the common_password with students; students sign in with their name, class and this password.",
+        "message": "Exam published. It is open for the configured number of days. Students sign in using their own name, class and the portal's fixed shared password.",
     }
 
 @mcp.tool()
