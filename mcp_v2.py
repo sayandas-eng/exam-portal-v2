@@ -209,12 +209,14 @@ def portal_call(method: str, path: str, **kwargs):
         raise RuntimeError(f"Exam Portal V2 returned HTTP {response.status_code}: {response.text[:1200]}")
     return response.json()
 
-def normalize_class(value: str) -> str:
-    value = str(value).strip()
+def normalize_class(value: str) -> str | None:
+    value = str(value or "").strip()
+    if value.lower() in ("any", "any class", "all", "all classes", "open to all"):
+        return None
     if value.isdigit():
         value = f"Class {value}"
     if not value or len(value) > 60:
-        raise ValueError("Provide a valid target class, for example Class 10.")
+        raise ValueError("Provide a valid target class (for example Class 10) or 'Any Class'.")
     return value
 
 @mcp.tool()
@@ -222,15 +224,20 @@ def create_and_publish_exam(
     title: str,
     subject: str,
     topic: str,
-    class_level: str,
-    questions_json: str,
-    common_password: str,
+    class_level: str = "Any Class",
+    questions_json: str = "",
+    common_password: str = "",
     duration_minutes: int = 45,
     review_minutes: int = 0,
     difficulty: str = "moderate",
 ) -> dict:
     """Create and publish an examination in Exam Portal V2. Gemini must first generate a fresh unique strong common_password (minimum 16 characters with uppercase, lowercase, number and symbol) and include it here. questions_json is a JSON array of objects with prompt, question_type (mcq, saq or laq), marks, options and correct_option for MCQs, or expected_answer and marking_scheme for written questions. Supports aliases question/type/answer. The tool creates a draft, publishes it, and returns the common password once for the teacher to distribute. Students sign in with name, class and this password."""
-    class_level = normalize_class(class_level)
+    display_class = str(class_level or "Any Class").strip() or "Any Class"
+    normalized_class = normalize_class(display_class)
+    if not title.strip() or not subject.strip() or not topic.strip():
+        raise ValueError("Title, subject and topic are required.")
+    if not 1 <= int(duration_minutes) <= 300 or not 0 <= int(review_minutes) <= 120:
+        raise ValueError("Duration must be 1–300 minutes and review time 0–120 minutes.")
     if len(common_password) < 16 or not all((
         re.search(r"[A-Z]", common_password),
         re.search(r"[a-z]", common_password),
@@ -281,7 +288,7 @@ def create_and_publish_exam(
         questions.append(q)
     created = portal_call("POST", "/api/admin/exams", json={
         "title": title, "subject": subject, "topic": topic,
-        "target_class": class_level, "difficulty": difficulty,
+        "target_class": normalized_class, "difficulty": difficulty,
         "duration_minutes": int(duration_minutes), "review_minutes": int(review_minutes),
         "exam_password": common_password, "questions": questions,
     })
@@ -289,11 +296,11 @@ def create_and_publish_exam(
     published = portal_call("POST", f"/api/admin/exams/{exam_id}/publish", json={})
     return {
         "ok": True, "exam_id": exam_id, "title": title,
-        "class_level": class_level, "status": published.get("status", "live"),
+        "class_level": display_class, "status": published.get("status", "live"),
         "question_count": created.get("question_count"),
         "total_marks": created.get("total_marks"),
         "common_password": common_password,
-        "student_portal": BASE + "/student",
+        "student_portal": BASE + "/",
         "message": "Exam published. Share the common_password with students; students sign in with their name, class and this password.",
     }
 
