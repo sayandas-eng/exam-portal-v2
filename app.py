@@ -926,7 +926,7 @@ def download_attempt_result_pdf(attempt_id):
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
-                   a.submitted_at, e.total_marks
+                   a.submitted_at, e.title AS exam_title, e.total_marks
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE a.id=%s
@@ -935,7 +935,21 @@ def download_attempt_result_pdf(attempt_id):
         if not result:
             return error("Attempt not found", 404)
         if result["status"] != "evaluated":
-            return error("The result PDF is available after the teacher finalises the marks.", 409)
+            return error("The result PDF is available after marks are finalised.", 409)
+        cur.execute("""
+            SELECT q.position, q.question_type, q.prompt, q.options,
+                   q.marks AS maximum_marks, ans.answer_text, ans.selected_option,
+                   ev.final_marks, ev.ai_marks
+            FROM portal_v2_questions q
+            JOIN portal_v2_attempts a ON a.exam_id=q.exam_id
+            LEFT JOIN portal_v2_answers ans
+              ON ans.question_id=q.id AND ans.attempt_id=a.id
+            LEFT JOIN portal_v2_evaluations ev
+              ON ev.question_id=q.id AND ev.attempt_id=a.id
+            WHERE a.id=%s
+            ORDER BY q.position
+        """, (attempt_id,))
+        question_rows = cur.fetchall()
         cur.execute("""
             SELECT COALESCE(SUM(ev.final_marks), 0) AS obtained_marks,
                    COALESCE(SUM(q.marks), 0) AS total_marks
@@ -947,11 +961,12 @@ def download_attempt_result_pdf(attempt_id):
         """, (attempt_id,))
         marks = cur.fetchone()
 
+    from xml.sax.saxutils import escape
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.enums import TA_CENTER
     from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
 
     submitted = result["submitted_at"]
     if submitted:
@@ -962,48 +977,138 @@ def download_attempt_result_pdf(attempt_id):
         submitted_text = "Not available"
 
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=64, leftMargin=64, topMargin=90, bottomMargin=72)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=42, leftMargin=42, topMargin=42, bottomMargin=42)
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        "CompactResultTitle", parent=styles["Title"], alignment=TA_CENTER,
-        textColor=colors.HexColor("#172554"), fontSize=20, leading=26, spaceAfter=8
-    )
-    subtitle_style = ParagraphStyle(
-        "CompactResultSubtitle", parent=styles["Normal"], alignment=TA_CENTER,
-        textColor=colors.HexColor("#64748b"), fontSize=9, spaceAfter=28
-    )
-    rows = [
-        ["Student name", str(result["student_name"])],
-        ["Class", str(result["student_class"])],
-        ["Marks obtained", f'{float(marks["obtained_marks"]):g}'],
-        ["Total marks", f'{float(marks["total_marks"]):g}'],
-        ["Date & time", submitted_text],
-    ]
-    table = Table(rows, colWidths=[150, 310], hAlign="CENTER")
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eef2ff")),
-        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#172033")),
-        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-        ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
-        ("FONTSIZE", (0, 0), (-1, -1), 12),
-        ("LEADING", (0, 0), (-1, -1), 18),
-        ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#d8deeb")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 14),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 14),
-        ("TOPPADDING", (0, 0), (-1, -1), 14),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
-    ]))
+    title_style = ParagraphStyle("DetailedResultTitle", parent=styles["Title"], alignment=TA_CENTER, textColor=colors.HexColor("#172554"), fontSize=18, leading=23, spaceAfter=6)
+    meta_style = ParagraphStyle("DetailedResultMeta", parent=styles["Normal"], fontSize=9, leading=13, textColor=colors.HexColor("#334155"))
+    q_style = ParagraphStyle("QuestionText", parent=styles["Normal"], fontSize=10, leading=14, spaceAfter=5)
+    small_style = ParagraphStyle("OptionText", parent=styles["Normal"], fontSize=9, leading=12, leftIndent=10)
     story = [
         Paragraph("EXAMINATION RESULT", title_style),
-        Paragraph("Official student marks summary", subtitle_style),
-        table,
+        Paragraph(escape(str(result["exam_title"])), ParagraphStyle("ExamName", parent=meta_style, alignment=TA_CENTER, fontSize=11, spaceAfter=14)),
     ]
+    summary = [
+        ["Student", str(result["student_name"]), "Class", str(result["student_class"])],
+        ["Marks obtained", f'{float(marks["obtained_marks"]):g}', "Total marks", f'{float(marks["total_marks"]):g}'],
+        ["Submitted", submitted_text, "", ""],
+    ]
+    summary_table = Table(summary, colWidths=[85, 175, 75, 145])
+    summary_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eef2ff")),
+        ("BACKGROUND", (2, 0), (2, 1), colors.HexColor("#eef2ff")),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (2, 0), (2, 1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), .5, colors.HexColor("#d8deeb")),
+        ("SPAN", (1, 2), (3, 2)),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story += [summary_table, Spacer(1, 18), Paragraph("QUESTIONS AND STUDENT RESPONSES", styles["Heading2"]), Spacer(1, 6)]
+    for idx, q in enumerate(question_rows, 1):
+        parts = [Paragraph(f'<b>Q{idx}. {escape(str(q["prompt"] or ""))}</b> <font color="#64748b">({float(q["maximum_marks"]):g} marks)</font>', q_style)]
+        opts = q["options"] or []
+        if isinstance(opts, dict):
+            opt_items = list(opts.items())
+        elif isinstance(opts, list):
+            opt_items = [(chr(65+i), val) for i, val in enumerate(opts)]
+        else:
+            opt_items = []
+        for key, value in opt_items:
+            selected = str(q["selected_option"] or "").strip().upper() == str(key).strip().upper()
+            prefix = "☑" if selected else "☐"
+            parts.append(Paragraph(f'{prefix} {escape(str(key))}. {escape(str(value))}' + ("  <b>(Selected)</b>" if selected else ""), small_style))
+        if q["question_type"] == "mcq":
+            if not opt_items:
+                parts.append(Paragraph("Options: not available", small_style))
+            if not q["selected_option"]:
+                parts.append(Paragraph("<b>Selected option:</b> Not answered", small_style))
+        else:
+            parts.append(Paragraph("<b>Student answer:</b> " + escape(str(q["answer_text"] or "Not answered")), small_style))
+        awarded = q["final_marks"] if q["final_marks"] is not None else (q["ai_marks"] or 0)
+        parts.append(Paragraph(f'<b>Marks awarded:</b> {float(awarded):g} / {float(q["maximum_marks"]):g}', small_style))
+        story.append(KeepTogether(parts))
+        story.append(Spacer(1, 10))
     doc.build(story)
     buffer.seek(0)
     safe_name = "".join(ch for ch in str(result["student_name"]) if ch.isalnum() or ch in (" ", "-", "_")).strip().replace(" ", "_") or "student"
-    return send_file(buffer, mimetype="application/pdf", as_attachment=True,
-                     download_name=f"{safe_name}_result.pdf")
+    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=f"{safe_name}_exam_result.pdf")
+
+
+@app.get("/api/admin/rankings.pdf")
+def download_all_student_rankings_pdf():
+    if not admin_required():
+        return error("Admin authentication required", 401)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT e.id AS exam_id, e.title AS exam_title, e.target_class,
+                   e.total_marks, a.student_name, a.student_class, a.submitted_at,
+                   COALESCE(SUM(ev.final_marks), 0)::float AS obtained_marks
+            FROM portal_v2_attempts a
+            JOIN portal_v2_exams e ON e.id=a.exam_id
+            LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
+            WHERE a.status='evaluated'
+            GROUP BY e.id, a.id
+            ORDER BY e.title, obtained_marks DESC, a.submitted_at ASC, a.student_name ASC
+        """)
+        records = cur.fetchall()
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    from xml.sax.saxutils import escape
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=30, leftMargin=30, topMargin=35, bottomMargin=35)
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("RankingTitle", parent=styles["Title"], alignment=TA_CENTER, textColor=colors.HexColor("#172554"), fontSize=18, spaceAfter=5)
+    sub_style = ParagraphStyle("RankingSub", parent=styles["Normal"], alignment=TA_CENTER, textColor=colors.HexColor("#64748b"), fontSize=9, spaceAfter=16)
+    story = [Paragraph("STUDENT RANKING LIST", title_style), Paragraph("All evaluated examinations · Ranked by marks obtained", sub_style)]
+    grouped = {}
+    for row in records:
+        grouped.setdefault(str(row["exam_id"]), []).append(row)
+    if not grouped:
+        story.append(Paragraph("No evaluated student results are available yet.", styles["Normal"]))
+    for exam_id, rows in grouped.items():
+        first = rows[0]
+        story.append(Paragraph(escape(str(first["exam_title"])) + " — " + escape(str(first["student_class"] or first["target_class"] or "")), styles["Heading2"]))
+        table_rows = [["Rank", "Student name", "Class", "Marks obtained", "Total marks", "Submitted (IST)"]]
+        previous_marks = None
+        rank = 0
+        for index, row in enumerate(rows, 1):
+            value = float(row["obtained_marks"] or 0)
+            if previous_marks is None or value < previous_marks:
+                rank = index
+            previous_marks = value
+            submitted = row["submitted_at"]
+            if submitted:
+                if submitted.tzinfo is None:
+                    submitted = submitted.replace(tzinfo=timezone.utc)
+                date_text = submitted.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y %I:%M %p")
+            else:
+                date_text = "—"
+            table_rows.append([str(rank), str(row["student_name"]), str(row["student_class"]), f"{value:g}", f'{float(row["total_marks"]):g}', date_text])
+        table = Table(table_rows, repeatRows=1, colWidths=[42, 180, 65, 85, 75, 125])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef2ff")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#3730a3")),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), .4, colors.HexColor("#d8deeb")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.extend([table, Spacer(1, 18)])
+    doc.build(story)
+    buffer.seek(0)
+    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name="student_rankings.pdf")
 
 @app.errorhandler(404)
 def not_found(_):
