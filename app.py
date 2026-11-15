@@ -74,7 +74,8 @@ def public_exams():
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT id, title, subject, target_class, topic, difficulty,
-                   duration_minutes, review_minutes, total_marks, published_at
+                   duration_minutes, review_minutes, total_marks, published_at,
+                   (exam_password_hash IS NOT NULL) AS has_password
             FROM portal_v2_exams
             WHERE status = 'live'
             ORDER BY published_at DESC NULLS LAST
