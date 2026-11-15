@@ -32,6 +32,9 @@ def db():
     conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
     conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS availability_days INTEGER NOT NULL DEFAULT 3")
     conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_until TIMESTAMPTZ")
+    conn.execute("""UPDATE portal_v2_exams
+                    SET available_until = published_at + (availability_days::text || ' days')::interval
+                    WHERE status='live' AND available_until IS NULL AND published_at IS NOT NULL""")
     return conn
 
 
@@ -301,7 +304,7 @@ def publish_exam(exam_id):
         cur.execute("""
             UPDATE portal_v2_exams
             SET status='live', published_at=now(),
-                available_until=now() + (availability_days || ' days')::interval
+                available_until=now() + (availability_days::text || ' days')::interval
             WHERE id=%s AND status IN ('draft','paused') RETURNING id
         """, (exam_id,))
         if not cur.fetchone():
@@ -310,7 +313,10 @@ def publish_exam(exam_id):
             INSERT INTO portal_v2_audit_log (actor, action, entity_type, entity_id)
             VALUES ('admin', 'exam_published', 'exam', %s)
         """, (exam_id,))
-    return jsonify({"ok": True, "exam_id": exam_id, "status": "live"})
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT available_until FROM portal_v2_exams WHERE id=%s", (exam_id,))
+        expiry = cur.fetchone()["available_until"]
+    return jsonify({"ok": True, "exam_id": exam_id, "status": "live", "available_until": expiry})
 
 
 @app.post("/api/exams/<exam_id>/start")
