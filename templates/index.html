@@ -10,8 +10,29 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .admin-lock{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;padding:24px;background:rgba(10,15,28,.78);backdrop-filter:blur(14px)}
+    .admin-lock[hidden]{display:none}.admin-lock-card{width:min(420px,100%);padding:34px;border-radius:22px;background:#fff;box-shadow:0 24px 90px #0005}
+    .admin-lock-card h1{font:800 28px Manrope,sans-serif;margin:0 0 8px;color:#171b2b}.admin-lock-card p{color:#697086;margin:0 0 24px}
+    .admin-lock-card label{display:block;font-weight:600;font-size:13px;margin:14px 0 6px;color:#34394c}
+    .admin-lock-card input{width:100%;padding:13px 14px;border:1px solid #dce0ea;border-radius:10px;font:inherit}
+    .admin-lock-card button{width:100%;margin-top:20px;padding:13px;border:0;border-radius:10px;background:#171b2b;color:white;font-weight:700;cursor:pointer}
+    #admin-lock-error{color:#b42318;min-height:20px;margin-top:12px;font-size:13px}
+  </style>
 </head>
 <body>
+  <section id="admin-lock" class="admin-lock" aria-modal="true" role="dialog" aria-labelledby="admin-lock-title">
+    <form id="admin-login-form" class="admin-lock-card">
+      <h1 id="admin-lock-title">Private admin workspace</h1>
+      <p>Sign in to access examination management.</p>
+      <label for="admin-username">Username</label>
+      <input id="admin-username" name="username" autocomplete="username" required>
+      <label for="admin-password">Password</label>
+      <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
+      <button id="admin-login-button" type="submit">Unlock workspace</button>
+      <div id="admin-lock-error" role="alert"></div>
+    </form>
+  </section>
   <div class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="/" aria-label="Exam Portal home">
@@ -34,8 +55,7 @@
         <div class="topbar-right">
           <span class="system-status"><i></i> Service online</span>
           <div class="admin-connect">
-            <input id="admin-key" type="password" autocomplete="current-password" placeholder="Admin key · one-time login" aria-label="Admin access key">
-            <button id="connect-button" class="button button-dark">Unlock</button>
+            <span id="admin-session-label">Workspace locked</span>
             <button id="logout-button" class="button button-dark hidden" type="button">Log out</button>
           </div>
         </div>
