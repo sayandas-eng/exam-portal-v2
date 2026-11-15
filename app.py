@@ -197,7 +197,7 @@ def public_exams():
         return error("Student sign-in required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT id, title, subject, target_class, topic, difficulty,
+            SELECT id, title, subject, NULL::text AS target_class, topic, difficulty,
                    duration_minutes, review_minutes, total_marks, published_at,
                    available_until, true AS has_password
             FROM portal_v2_exams
@@ -214,7 +214,7 @@ def admin_list_exams():
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT e.id, e.title, e.subject, e.target_class, e.topic,
-                   e.difficulty, e.status, e.duration_minutes, e.review_minutes,
+                   e.difficulty, CASE WHEN e.status='live' AND e.available_until <= now() THEN 'closed' ELSE e.status END AS status, e.duration_minutes, e.review_minutes,
                    e.total_marks, e.created_at, e.published_at,
                    e.availability_days, e.available_until,
                    COUNT(q.id)::int AS question_count
