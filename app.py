@@ -26,15 +26,21 @@ ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 STUDENT_EXAM_PASSWORD = os.getenv("STUDENT_EXAM_PASSWORD", "")
 
 
+SCHEMA_READY = False
+
+
 def db():
+    global SCHEMA_READY
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not configured")
     conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
-    conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS availability_days INTEGER NOT NULL DEFAULT 3")
-    conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_until TIMESTAMPTZ")
-    conn.execute("""UPDATE portal_v2_exams
-                    SET available_until = published_at + (availability_days::text || ' days')::interval
-                    WHERE status='live' AND available_until IS NULL AND published_at IS NOT NULL""")
+    if not SCHEMA_READY:
+        conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS availability_days INTEGER NOT NULL DEFAULT 3")
+        conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_until TIMESTAMPTZ")
+        conn.execute("""UPDATE portal_v2_exams
+                        SET available_until = published_at + (availability_days::text || ' days')::interval
+                        WHERE status='live' AND available_until IS NULL AND published_at IS NOT NULL""")
+        SCHEMA_READY = True
     return conn
 
 
