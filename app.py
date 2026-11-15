@@ -219,12 +219,12 @@ def student_login():
             LIMIT 1
         """, (name, student_class))
         matched_exam = cur.fetchone()
-    if not matched_exam:
-        return error("There are no new examinations available for you right now. You may have already completed the open exams.", 403)
+    # Allow sign-in even when every currently open exam has already been attempted,
+    # so students can still view their submission history and released results.
     session.clear()
     session["student_name"] = name
     session["student_class"] = student_class
-    session["authorized_exam_id"] = str(matched_exam["id"])
+    session["authorized_exam_id"] = str(matched_exam["id"]) if matched_exam else None
     session["csrf_token"] = secrets.token_urlsafe(32)
     session.permanent = True
     return jsonify({
@@ -285,7 +285,7 @@ def health():
 
 @app.get("/api/exams")
 def public_exams():
-    if not student_required() or not session.get("authorized_exam_id"):
+    if not student_required():
         return error("Student sign-in required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
