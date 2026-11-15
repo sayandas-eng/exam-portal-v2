@@ -15,7 +15,7 @@ import requests
 from pydantic import AnyHttpUrl
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from mcp.server.auth.provider import (
     AccessToken, AuthorizationCode, AuthorizationParams,
@@ -142,6 +142,7 @@ auth = AuthSettings(
         enabled=True, valid_scopes=["portal"], default_scopes=["portal"]
     ),
     required_scopes=["portal"],
+    validate_token_resource=True,
 )
 mcp = FastMCP(
     name="Exam Portal V2",
@@ -155,6 +156,14 @@ mcp = FastMCP(
     ),
     host=HOST, port=PORT, auth_server_provider=provider, auth=auth,
 )
+
+@mcp.custom_route("/", methods=["GET"])
+async def root_info(request: Request) -> Response:
+    return JSONResponse({"service": "Exam Portal V2 Gemini MCP", "status": "online", "mcp_endpoint": "/mcp"})
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health(request: Request) -> Response:
+    return JSONResponse({"ok": True, "service": "exam-portal-v2-gemini-mcp"})
 
 @mcp.custom_route("/login", methods=["GET"])
 async def login_page(request: Request) -> Response:
