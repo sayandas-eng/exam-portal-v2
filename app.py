@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import psycopg
 from psycopg.rows import dict_row
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template
 from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
@@ -29,6 +29,11 @@ def error(message, status=400):
 
 @app.get("/")
 def home():
+    return render_template("index.html")
+
+
+@app.get("/api")
+def api_info():
     return jsonify({
         "name": "Exam Portal V2",
         "status": "online",
@@ -40,6 +45,7 @@ def home():
             "submit": "POST /api/attempts/<attempt_id>/submit",
             "result": "GET /api/attempts/<attempt_id>/result",
             "admin_create_exam": "POST /api/admin/exams (X-Admin-Key required)",
+            "admin_list_exams": "GET /api/admin/exams (X-Admin-Key required)",
             "admin_publish_exam": "POST /api/admin/exams/<exam_id>/publish (X-Admin-Key required)"
         }
     })
@@ -67,6 +73,24 @@ def public_exams():
             FROM portal_v2_exams
             WHERE status = 'live'
             ORDER BY published_at DESC NULLS LAST
+        """)
+        return jsonify({"ok": True, "exams": cur.fetchall()})
+
+
+@app.get("/api/admin/exams")
+def admin_list_exams():
+    if not admin_required():
+        return error("Admin authentication required", 401)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT e.id, e.title, e.subject, e.target_class, e.topic,
+                   e.difficulty, e.status, e.duration_minutes, e.review_minutes,
+                   e.total_marks, e.created_at, e.published_at,
+                   COUNT(q.id)::int AS question_count
+            FROM portal_v2_exams e
+            LEFT JOIN portal_v2_questions q ON q.exam_id=e.id
+            GROUP BY e.id
+            ORDER BY e.created_at DESC
         """)
         return jsonify({"ok": True, "exams": cur.fetchall()})
 
