@@ -794,7 +794,7 @@ def admin_attempt_detail(attempt_id):
                    q.prompt, q.options, q.correct_option, q.expected_answer,
                    q.marking_scheme, q.marks AS maximum_marks,
                    ans.answer_text, ans.selected_option,
-                   ev.final_marks, ev.teacher_feedback
+                   ev.ai_marks, ev.final_marks, ev.teacher_feedback, ev.reviewed_by
             FROM portal_v2_questions q
             JOIN portal_v2_attempts a ON a.exam_id=q.exam_id
             LEFT JOIN portal_v2_answers ans
