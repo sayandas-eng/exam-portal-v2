@@ -4,10 +4,12 @@ from datetime import datetime, timedelta, timezone
 
 import psycopg
 from psycopg.rows import dict_row
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, jsonify, request, render_template, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY")
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SECURE=True, SESSION_COOKIE_SAMESITE="Lax", PERMANENT_SESSION_LIFETIME=timedelta(days=7))
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
 
@@ -35,6 +37,83 @@ def home():
 @app.get("/student")
 def student_portal():
     return render_template("student.html")
+
+
+
+def student_required():
+    return bool(session.get("student_user_id"))
+
+
+@app.post("/api/student/register")
+def student_register():
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("full_name", "")).strip()
+    email = str(data.get("email", "")).strip().lower()
+    student_class = str(data.get("student_class", "")).strip()
+    password = str(data.get("password", ""))
+    if not name or not email or not student_class or len(password) < 8:
+        return error("Enter your name, email, class, and a password of at least 8 characters")
+    if len(name) > 120 or len(email) > 254 or len(student_class) > 60 or "@" not in email:
+        return error("Please check your name, email, and class")
+    try:
+        with db() as conn, conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO portal_v2_student_users (full_name, email, student_class, password_hash)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, full_name, email, student_class
+            """, (name, email, student_class, generate_password_hash(password)))
+            user = cur.fetchone()
+        session.clear()
+        session["student_user_id"] = str(user["id"])
+        session.permanent = True
+        return jsonify({"ok": True, "student": user}), 201
+    except psycopg.errors.UniqueViolation:
+        return error("An account with this email already exists. Please sign in instead.", 409)
+    except Exception:
+        app.logger.exception("Student registration failed")
+        return error("Could not create student account", 500)
+
+
+@app.post("/api/student/login")
+def student_login():
+    data = request.get_json(silent=True) or {}
+    email = str(data.get("email", "")).strip().lower()
+    password = str(data.get("password", ""))
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, full_name, email, student_class, password_hash
+            FROM portal_v2_student_users WHERE email=%s
+        """, (email,))
+        user = cur.fetchone()
+        if not user or not check_password_hash(user["password_hash"], password):
+            return error("Incorrect email or password", 401)
+        cur.execute("UPDATE portal_v2_student_users SET last_login_at=now() WHERE id=%s", (user["id"],))
+    session.clear()
+    session["student_user_id"] = str(user["id"])
+    session.permanent = True
+    return jsonify({"ok": True, "student": {k: user[k] for k in ("id", "full_name", "email", "student_class")}})
+
+
+@app.get("/api/student/me")
+def student_me():
+    if not student_required():
+        return error("Student sign-in required", 401)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, full_name, email, student_class
+            FROM portal_v2_student_users WHERE id=%s
+        """, (session["student_user_id"],))
+        user = cur.fetchone()
+    if not user:
+        session.clear()
+        return error("Student account not found", 401)
+    return jsonify({"ok": True, "student": user})
+
+
+@app.post("/api/student/logout")
+def student_logout():
+    session.clear()
+    return jsonify({"ok": True})
 
 
 @app.get("/api")
@@ -179,12 +258,18 @@ def publish_exam(exam_id):
 
 @app.post("/api/exams/<exam_id>/start")
 def start_exam(exam_id):
+    if not student_required():
+        return error("Please sign in with your student account first", 401)
     data = request.get_json(silent=True) or {}
-    name = str(data.get("student_name", "")).strip()
-    student_class = str(data.get("student_class", "")).strip()
-    if not name or not student_class:
-        return error("student_name and student_class are required")
     with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, full_name, student_class FROM portal_v2_student_users WHERE id=%s
+        """, (session["student_user_id"],))
+        student = cur.fetchone()
+        if not student:
+            session.clear()
+            return error("Student account not found", 401)
+        name, student_class = student["full_name"], student["student_class"]
         cur.execute("""
             SELECT id, target_class, exam_password_hash, duration_minutes, review_minutes
             FROM portal_v2_exams WHERE id=%s AND status='live'
@@ -204,11 +289,11 @@ def start_exam(exam_id):
         review_deadline = exam_deadline + timedelta(minutes=exam["review_minutes"])
         cur.execute("""
             INSERT INTO portal_v2_attempts
-            (exam_id, student_name, student_class, student_session_id,
+            (exam_id, student_name, student_class, student_session_id, student_user_id,
              exam_deadline, review_deadline)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id, started_at, exam_deadline, review_deadline
-        """, (exam_id, name, student_class, session_id, exam_deadline, review_deadline))
+        """, (exam_id, name, student_class, session_id, session["student_user_id"], exam_deadline, review_deadline))
         attempt = cur.fetchone()
         cur.execute("""
             SELECT id, position, question_type, prompt, options, marks
@@ -219,6 +304,8 @@ def start_exam(exam_id):
 
 @app.put("/api/attempts/<attempt_id>/answers/<question_id>")
 def save_answer(attempt_id, question_id):
+    if not student_required():
+        return error("Student sign-in required", 401)
     data = request.get_json(silent=True) or {}
     answer_text = data.get("answer_text")
     selected_option = data.get("selected_option")
@@ -227,8 +314,8 @@ def save_answer(attempt_id, question_id):
             SELECT a.status, a.review_deadline, q.id
             FROM portal_v2_attempts a
             JOIN portal_v2_questions q ON q.exam_id=a.exam_id
-            WHERE a.id=%s AND q.id=%s
-        """, (attempt_id, question_id))
+            WHERE a.id=%s AND q.id=%s AND a.student_user_id=%s
+        """, (attempt_id, question_id, session["student_user_id"]))
         row = cur.fetchone()
         if not row:
             return error("Attempt or question not found", 404)
@@ -248,11 +335,13 @@ def save_answer(attempt_id, question_id):
 
 @app.post("/api/attempts/<attempt_id>/submit")
 def submit_attempt(attempt_id):
+    if not student_required():
+        return error("Student sign-in required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             UPDATE portal_v2_attempts SET status='submitted', submitted_at=now()
-            WHERE id=%s AND status='in_progress' RETURNING id
-        """, (attempt_id,))
+            WHERE id=%s AND student_user_id=%s AND status='in_progress' RETURNING id
+        """, (attempt_id, session["student_user_id"]))
         if not cur.fetchone():
             return error("Attempt not found or already submitted", 409)
         cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
@@ -261,14 +350,16 @@ def submit_attempt(attempt_id):
 
 @app.get("/api/attempts/<attempt_id>/result")
 def attempt_result(attempt_id):
+    if not student_required():
+        return error("Student sign-in required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
                    a.started_at, a.submitted_at, a.evaluated_at,
                    e.title, e.subject, e.total_marks
             FROM portal_v2_attempts a JOIN portal_v2_exams e ON e.id=a.exam_id
-            WHERE a.id=%s
-        """, (attempt_id,))
+            WHERE a.id=%s AND a.student_user_id=%s
+        """, (attempt_id, session["student_user_id"]))
         result = cur.fetchone()
         if not result:
             return error("Attempt not found", 404)
