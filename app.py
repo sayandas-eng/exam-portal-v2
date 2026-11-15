@@ -209,20 +209,38 @@ def student_login():
     if not STUDENT_EXAM_PASSWORD or not hmac.compare_digest(password, STUDENT_EXAM_PASSWORD):
         return error("Incorrect examination password", 401)
     with db() as conn, conn.cursor() as cur:
+        # A student may sign in only while an exam for their class is live.
+        # This check is independent of prior attempts so students can still
+        # access their history/results while another eligible exam is live.
         cur.execute("""
             SELECT e.id
             FROM portal_v2_exams e
-            WHERE e.status='live' AND e.available_from <= now() AND e.available_until > now()
+            WHERE e.status='live'
+              AND e.available_from <= now()
+              AND e.available_until > now()
+              AND (e.target_class IS NULL OR lower(trim(e.target_class)) = lower(%s))
+            ORDER BY e.published_at DESC NULLS LAST
+            LIMIT 1
+        """, (student_class,))
+        active_exam = cur.fetchone()
+        if not active_exam:
+            return error("No examination is live for your class right now. Please try again when your teacher publishes an exam.", 403)
+
+        cur.execute("""
+            SELECT e.id
+            FROM portal_v2_exams e
+            WHERE e.status='live'
+              AND e.available_from <= now()
+              AND e.available_until > now()
+              AND (e.target_class IS NULL OR lower(trim(e.target_class)) = lower(%s))
               AND NOT EXISTS (
                 SELECT 1 FROM portal_v2_attempts a
                 WHERE a.exam_id=e.id AND a.student_name=%s AND a.student_class=%s
               )
-            ORDER BY e.published_at DESC
+            ORDER BY e.published_at DESC NULLS LAST
             LIMIT 1
-        """, (name, student_class))
+        """, (student_class, name, student_class))
         matched_exam = cur.fetchone()
-    # Allow sign-in even when every currently open exam has already been attempted,
-    # so students can still view their submission history and released results.
     session.clear()
     session["student_name"] = name
     session["student_class"] = student_class
