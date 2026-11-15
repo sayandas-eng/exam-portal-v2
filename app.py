@@ -64,32 +64,10 @@ def db():
 
 
 def purge_expired_exams():
-    """Delete expired exams and all dependent student records."""
-    with db() as conn:
-        with conn.transaction():
-            locked = conn.execute(
-                "SELECT pg_try_advisory_xact_lock(8273649102) AS acquired"
-            ).fetchone()
-            if not locked or not locked["acquired"]:
-                return
-            expired_attempts = """
-                SELECT a.id FROM portal_v2_attempts a
-                JOIN portal_v2_exams e ON e.id = a.exam_id
-                WHERE e.available_until IS NOT NULL AND e.available_until <= now()
-            """
-            conn.execute(f"DELETE FROM portal_v2_evaluations WHERE attempt_id IN ({expired_attempts})")
-            conn.execute(f"DELETE FROM portal_v2_answers WHERE attempt_id IN ({expired_attempts})")
-            conn.execute(f"DELETE FROM portal_v2_attempts WHERE id IN ({expired_attempts})")
-            conn.execute("""
-                DELETE FROM portal_v2_questions q
-                USING portal_v2_exams e
-                WHERE q.exam_id = e.id
-                  AND e.available_until IS NOT NULL AND e.available_until <= now()
-            """)
-            conn.execute("""
-                DELETE FROM portal_v2_exams
-                WHERE available_until IS NOT NULL AND available_until <= now()
-            """)
+    """Retain expired exams and all student records; availability filters hide them from students."""
+    # Historical exam papers, attempts, answers and evaluations are permanent records.
+    # Expiry is enforced by the live-exam queries, not by deleting database rows.
+    return
 
 
 def _expiry_cleanup_loop():
@@ -223,8 +201,16 @@ def student_login():
             LIMIT 1
         """, (student_class,))
         active_exam = cur.fetchone()
-        if not active_exam:
-            return error("No examination is live for your class right now. Please try again when your teacher publishes an exam.", 403)
+        cur.execute("""
+            SELECT EXISTS (
+                SELECT 1 FROM portal_v2_attempts a
+                WHERE lower(trim(a.student_name)) = lower(trim(%s))
+                  AND lower(trim(a.student_class)) = lower(trim(%s))
+            ) AS has_history
+        """, (name, student_class))
+        has_history = cur.fetchone()["has_history"]
+        if not active_exam and not has_history:
+            return error("No examination is live for your class, and no previous examination record was found. Please try again when your teacher publishes an exam.", 403)
 
         cur.execute("""
             SELECT e.id
