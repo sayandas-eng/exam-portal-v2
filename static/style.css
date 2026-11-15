@@ -50,3 +50,10 @@
   .admin-lock{padding:14px}
   .admin-lock-card{padding:24px 18px}
 }
+
+
+/* Exam row actions */
+.row-actions{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.row-action.row-delete{color:#b42318;border-color:#f1d2d0;background:#fff8f7}
+.row-action.row-delete:hover{background:#feeceb;border-color:#e9b7b3}
+@media(max-width:700px){.row-actions{gap:6px}.row-action{padding:8px 10px}}
