@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/static/student.css">
 </head>
 <body>
-  <header class="top"><a class="brand" href="/"><span class="mark">E</span><span>exam<span class="muted">portal</span><small>STUDENT PORTAL</small></span></a><a class="admin-link" href="/">Admin workspace ↗</a></header>
+  <header class="top"><a class="brand" href="/"><span class="mark">E</span><span>exam<span class="muted">portal</span><small>STUDENT PORTAL</small></span></a><div class="top-actions"><span id="student-greeting"></span><button id="logout" class="admin-link hidden" type="button">Sign out</button><a class="admin-link" href="/">Admin workspace ↗</a></div></header>
   <main class="wrap">
     <section id="listing-screen">
       <div class="intro"><p class="eyebrow">YOUR LEARNING, YOUR PACE</p><h1>Ready for your <span>next challenge?</span></h1><p class="sub">Choose an available examination below. Make sure you have enough time before starting.</p></div>
@@ -25,6 +25,6 @@
     <section id="done-screen" class="done hidden"><div class="done-icon">✓</div><p class="eyebrow">SUBMISSION RECEIVED</p><h1>Exam submitted.</h1><p id="done-copy">Your answers have been saved. You can close this page.</p><a class="button primary" href="/student">Back to student portal</a></section>
     <footer>Exam Portal V2 <span>·</span> Assessment workspace</footer>
   </main>
-  <dialog id="start-dialog"><form id="start-form" method="dialog"><button type="button" class="dialog-close" id="close-dialog">×</button><p class="eyebrow">BEFORE YOU BEGIN</p><h2 id="dialog-title">Start examination</h2><p id="dialog-info" class="sub"></p><label>Full name<input name="student_name" required maxlength="120" placeholder="Enter your name"></label><label>Class / grade<input name="student_class" required maxlength="60" placeholder="e.g. Class 10"></label><label id="password-field" class="hidden">Exam password<input name="exam_password" type="password" autocomplete="off"></label><p class="fine">By starting, the exam timer will begin immediately. Keep this tab open while answering.</p><button class="button primary full" type="submit">Start examination →</button></form></dialog>
+  <dialog id="start-dialog"><form id="start-form" method="dialog"><button type="button" class="dialog-close" id="close-dialog">×</button><p class="eyebrow">BEFORE YOU BEGIN</p><h2 id="dialog-title">Start examination</h2><p id="dialog-info" class="sub"></p><label id="password-field" class="hidden">Exam password<input name="exam_password" type="password" autocomplete="off"></label><p class="fine">By starting, the exam timer will begin immediately. Keep this tab open while answering.</p><button class="button primary full" type="submit">Start examination →</button></form></dialog>
   <script src="/static/student.js" defer></script>
 </body></html>
