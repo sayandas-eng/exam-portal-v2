@@ -3,6 +3,7 @@
   const $$ = (s, root=document) => [...root.querySelectorAll(s)];
   let adminKey = "";
   let exams = [];
+  let adminConnected = false;
   const notice = $("#notice");
   const showNotice = (message, type="info") => {
     notice.textContent = message; notice.className = "notice show " + type;
@@ -36,7 +37,7 @@
     $("#stat-questions").textContent = exams.reduce((n,e) => n + Number(e.question_count||0),0);
     $("#exam-count").textContent = filtered.length + (filtered.length === 1 ? " examination" : " examinations");
     const body = $("#exam-table-body");
-    if (!adminKey) {
+    if (!adminConnected) {
       body.innerHTML = '<tr><td colspan="7" class="empty-cell"><div class="empty-state"><span class="empty-icon">⌑</span><strong>Connect your admin account</strong><p>Enter your admin access key above to load your examinations.</p></div></td></tr>';
       return;
     }
@@ -56,19 +57,32 @@
     return String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
   }
   async function loadExams() {
-    if (!adminKey) return;
+    if (!adminConnected) return;
     const data = await api("/api/admin/exams");
     exams = data.exams || [];
     renderExams();
   }
-  $("#connect-button").addEventListener("click", async () => {
+  async function connectAdmin() {
     const key = $("#admin-key").value.trim();
-    if (!key) return showNotice("Enter your admin access key to continue.", "info");
-    adminKey = key;
+    if (!key) return showNotice("Enter your admin access key for this browser session.", "info");
     $("#connect-button").textContent = "Checking…";
-    try { await loadExams(); showNotice("Admin access connected. Your examinations are ready.", "success"); $("#connect-button").textContent="Connected"; $("#admin-key").value=""; }
-    catch (err) { adminKey=""; $("#connect-button").textContent="Connect"; showNotice(err.message, "error"); }
+    try {
+      await fetch("/api/admin/session/login", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key})}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.error||"Login failed");return d;});
+      adminConnected = true; adminKey = "";
+      $("#admin-key").classList.add("hidden"); $("#connect-button").classList.add("hidden"); $("#logout-button").classList.remove("hidden");
+      await loadExams(); showNotice("Admin session active. You won't need to enter the key again until it expires or you log out.", "success");
+    } catch(err) { $("#connect-button").textContent="Unlock"; showNotice(err.message,"error"); }
+  }
+  $("#connect-button").addEventListener("click", connectAdmin);
+  $("#logout-button").addEventListener("click", async () => {
+    await fetch("/api/admin/session/logout",{method:"POST"});
+    adminConnected=false; exams=[]; $("#admin-key").classList.remove("hidden"); $("#admin-key").value="";
+    $("#connect-button").classList.remove("hidden"); $("#connect-button").textContent="Unlock"; $("#logout-button").classList.add("hidden"); renderExams();
   });
+  async function initAdmin() {
+    try { const r=await fetch("/api/admin/session"); const d=await r.json(); adminConnected=!!d.ok; if(adminConnected){$("#admin-key").classList.add("hidden");$("#connect-button").classList.add("hidden");$("#logout-button").classList.remove("hidden");await loadExams();} else renderExams(); }
+    catch(_) { renderExams(); }
+  }
   $("#refresh-button").addEventListener("click", () => loadExams().catch(err => showNotice(err.message, "error")));
   $("#exam-search").addEventListener("input", renderExams);
   $("#status-filter").addEventListener("change", renderExams);
@@ -105,7 +119,7 @@
   addQuestion();
   $("#exam-form").addEventListener("submit", async event => {
     event.preventDefault();
-    if (!adminKey) { showNotice("Connect your admin account before creating an exam.", "error"); return; }
+    if (!adminConnected) { showNotice("Unlock the admin workspace before creating an exam.", "error"); return; }
     const form = new FormData(event.currentTarget);
     const cards = $$(".question-card");
     if (!cards.length) return showNotice("Add at least one question.", "error");
@@ -130,15 +144,16 @@
       title:form.get("title").trim(),subject:form.get("subject").trim(),topic:form.get("topic").trim(),
       target_class:form.get("target_class").trim()||null,difficulty:form.get("difficulty"),
       duration_minutes:Number(form.get("duration_minutes")),review_minutes:Number(form.get("review_minutes")||0),
-      exam_password:form.get("exam_password")||"",questions
+      availability_days:Number(form.get("availability_days")||3),questions
     };
     const button=$("#save-exam-button"); button.disabled=true; button.textContent="Creating…";
     try {
-      await api("/api/admin/exams",{method:"POST",body:JSON.stringify(payload)});
-      showNotice("Draft created. Review it in your examination list before publishing.","success");
+      const created=await api("/api/admin/exams",{method:"POST",body:JSON.stringify(payload)});
+      await api("/api/admin/exams/"+created.exam_id+"/publish",{method:"POST",body:"{}"});
+      showNotice("Examination created and published. Its availability countdown has started.","success");
       event.currentTarget.reset(); $("#question-list").innerHTML=""; addQuestion(); setView("overview"); await loadExams();
     } catch(err) { showNotice(err.message,"error"); }
     finally { button.disabled=false; button.innerHTML='Create draft <span>→</span>'; }
   });
-  renderExams();
+  initAdmin();
 })();
