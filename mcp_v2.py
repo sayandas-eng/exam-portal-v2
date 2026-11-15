@@ -5,6 +5,7 @@ Required environment: MCP_PUBLIC_URL, MCP_LOGIN_USERNAME, MCP_LOGIN_PASSWORD,
 MCP_API_TOKEN, PORTAL_BASE_URL
 """
 import html
+import hashlib
 import os
 import json
 import re
@@ -56,6 +57,16 @@ class PortalOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, Re
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS portal_v2_mcp_oauth_access_tokens (
+                    token_hash TEXT PRIMARY KEY,
+                    client_id TEXT NOT NULL,
+                    scopes JSONB NOT NULL,
+                    expires_at BIGINT NOT NULL,
+                    resource TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
             rows = conn.execute(
                 "SELECT client_id, client_info FROM portal_v2_mcp_oauth_clients"
             ).fetchall()
@@ -100,19 +111,58 @@ class PortalOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, Re
         if code.client_id != client.client_id:
             raise ValueError("OAuth client mismatch")
         token = "v2portal_" + secrets.token_urlsafe(48)
-        self.tokens[token] = AccessToken(
+        expires_at = int(time.time()) + 3600
+        token_record = AccessToken(
             token=token, client_id=client.client_id or "",
-            scopes=code.scopes, expires_at=int(time.time()) + 3600,
+            scopes=code.scopes, expires_at=expires_at,
             resource=code.resource,
         )
+        # Persist only a SHA-256 token fingerprint; the raw bearer token is never stored.
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        with psycopg.connect(DATABASE_URL) as conn:
+            conn.execute(
+                """INSERT INTO portal_v2_mcp_oauth_access_tokens
+                   (token_hash, client_id, scopes, expires_at, resource)
+                   VALUES (%s, %s, %s::jsonb, %s, %s)
+                   ON CONFLICT (token_hash) DO UPDATE SET
+                     client_id = EXCLUDED.client_id,
+                     scopes = EXCLUDED.scopes,
+                     expires_at = EXCLUDED.expires_at,
+                     resource = EXCLUDED.resource""",
+                (token_hash, token_record.client_id, json.dumps(code.scopes),
+                 expires_at, str(code.resource) if code.resource else None),
+            )
+        self.tokens[token] = token_record
         del self.codes[authorization_code.code]
         return OAuthToken(access_token=token, token_type="Bearer", expires_in=3600, scope=" ".join(code.scopes))
 
     async def load_access_token(self, token: str):
         item = self.tokens.get(token)
-        if item and item.expires_at and item.expires_at <= time.time():
-            self.tokens.pop(token, None)
+        if item:
+            if item.expires_at and item.expires_at <= time.time():
+                self.tokens.pop(token, None)
+                return None
+            return item
+
+        # Recover valid bearer tokens after Render restarts or instance replacement.
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            row = conn.execute(
+                """SELECT client_id, scopes, expires_at, resource
+                   FROM portal_v2_mcp_oauth_access_tokens
+                   WHERE token_hash = %s AND expires_at > %s""",
+                (token_hash, int(time.time())),
+            ).fetchone()
+        if not row:
             return None
+        item = AccessToken(
+            token=token,
+            client_id=row["client_id"],
+            scopes=row["scopes"],
+            expires_at=row["expires_at"],
+            resource=row["resource"],
+        )
+        self.tokens[token] = item
         return item
 
     async def load_refresh_token(self, client, refresh_token: str):
@@ -123,6 +173,12 @@ class PortalOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, Re
 
     async def revoke_token(self, token: str, token_type_hint: str | None = None):
         self.tokens.pop(token, None)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        with psycopg.connect(DATABASE_URL) as conn:
+            conn.execute(
+                "DELETE FROM portal_v2_mcp_oauth_access_tokens WHERE token_hash = %s",
+                (token_hash,),
+            )
 
     async def login_page(self, state: str) -> HTMLResponse:
         if state not in self.states:
