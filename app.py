@@ -289,6 +289,123 @@ def attempt_result(attempt_id):
         return jsonify({"ok": True, "result": result})
 
 
+
+@app.get("/teacher")
+def teacher_portal():
+    return render_template("teacher.html")
+
+
+@app.get("/api/admin/attempts")
+def admin_list_attempts():
+    if not admin_required():
+        return error("Admin authentication required", 401)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT a.id, a.student_name, a.student_class, a.status,
+                   a.started_at, a.submitted_at, e.id AS exam_id,
+                   e.title AS exam_title, e.subject,
+                   COUNT(ans.id)::int AS answered_count
+            FROM portal_v2_attempts a
+            JOIN portal_v2_exams e ON e.id=a.exam_id
+            LEFT JOIN portal_v2_answers ans ON ans.attempt_id=a.id
+            GROUP BY a.id, e.id
+            ORDER BY a.submitted_at DESC NULLS LAST, a.started_at DESC
+        """)
+        return jsonify({"ok": True, "attempts": cur.fetchall()})
+
+
+@app.get("/api/admin/attempts/<attempt_id>")
+def admin_attempt_detail(attempt_id):
+    if not admin_required():
+        return error("Admin authentication required", 401)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT a.id, a.student_name, a.student_class, a.status,
+                   a.started_at, a.submitted_at, e.title AS exam_title,
+                   e.subject, e.total_marks
+            FROM portal_v2_attempts a
+            JOIN portal_v2_exams e ON e.id=a.exam_id
+            WHERE a.id=%s
+        """, (attempt_id,))
+        attempt = cur.fetchone()
+        if not attempt:
+            return error("Attempt not found", 404)
+        cur.execute("""
+            SELECT q.id AS question_id, q.position, q.question_type,
+                   q.prompt, q.options, q.correct_option, q.expected_answer,
+                   q.marking_scheme, q.marks AS maximum_marks,
+                   ans.answer_text, ans.selected_option,
+                   ev.final_marks, ev.teacher_feedback
+            FROM portal_v2_questions q
+            JOIN portal_v2_attempts a ON a.exam_id=q.exam_id
+            LEFT JOIN portal_v2_answers ans
+              ON ans.question_id=q.id AND ans.attempt_id=a.id
+            LEFT JOIN portal_v2_evaluations ev
+              ON ev.question_id=q.id AND ev.attempt_id=a.id
+            WHERE a.id=%s ORDER BY q.position
+        """, (attempt_id,))
+        return jsonify({"ok": True, "attempt": attempt, "questions": cur.fetchall()})
+
+
+@app.post("/api/admin/attempts/<attempt_id>/evaluate")
+def evaluate_attempt(attempt_id):
+    if not admin_required():
+        return error("Admin authentication required", 401)
+    data = request.get_json(silent=True) or {}
+    evaluations = data.get("evaluations")
+    reviewer = str(data.get("reviewer", "Teacher")).strip()[:120] or "Teacher"
+    if not isinstance(evaluations, list) or not evaluations:
+        return error("At least one evaluation is required")
+    try:
+        with db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT status FROM portal_v2_attempts WHERE id=%s FOR UPDATE", (attempt_id,))
+            attempt = cur.fetchone()
+            if not attempt:
+                return error("Attempt not found", 404)
+            if attempt["status"] not in ("submitted", "evaluated"):
+                return error("Only submitted attempts can be reviewed", 409)
+            cur.execute("SELECT id, marks FROM portal_v2_questions WHERE exam_id=(SELECT exam_id FROM portal_v2_attempts WHERE id=%s)", (attempt_id,))
+            maxima = {str(row["id"]): float(row["marks"]) for row in cur.fetchall()}
+            seen = set()
+            for item in evaluations:
+                qid = str(item.get("question_id", ""))
+                if qid not in maxima or qid in seen:
+                    return error("Invalid or duplicate question in evaluation")
+                seen.add(qid)
+                marks = float(item.get("final_marks", 0))
+                if marks < 0 or marks > maxima[qid]:
+                    return error("Marks must be between zero and the question maximum")
+                feedback = str(item.get("teacher_feedback", ""))[:4000]
+                cur.execute("""
+                    INSERT INTO portal_v2_evaluations
+                    (attempt_id, question_id, ai_marks, final_marks, teacher_feedback,
+                     reviewed_by, reviewed_at, updated_at)
+                    VALUES (%s, %s, 0, %s, %s, %s, now(), now())
+                    ON CONFLICT (attempt_id, question_id) DO UPDATE SET
+                      final_marks=EXCLUDED.final_marks,
+                      teacher_feedback=EXCLUDED.teacher_feedback,
+                      reviewed_by=EXCLUDED.reviewed_by,
+                      reviewed_at=now(), updated_at=now()
+                """, (attempt_id, qid, marks, feedback, reviewer))
+            cur.execute("SELECT COUNT(*) AS n FROM portal_v2_questions q JOIN portal_v2_attempts a ON a.exam_id=q.exam_id WHERE a.id=%s", (attempt_id,))
+            total_questions = cur.fetchone()["n"]
+            cur.execute("SELECT COUNT(*) AS n FROM portal_v2_evaluations WHERE attempt_id=%s", (attempt_id,))
+            reviewed = cur.fetchone()["n"]
+            if reviewed < total_questions:
+                return error("Save marks for every question before finalising the result")
+            cur.execute("UPDATE portal_v2_attempts SET status='evaluated', evaluated_at=now() WHERE id=%s", (attempt_id,))
+            cur.execute("""
+                INSERT INTO portal_v2_audit_log (actor, action, entity_type, entity_id)
+                VALUES (%s, 'attempt_evaluated', 'attempt', %s)
+            """, (reviewer, attempt_id))
+        return jsonify({"ok": True, "status": "evaluated"})
+    except (TypeError, ValueError):
+        return error("Marks must be valid numbers")
+    except Exception:
+        app.logger.exception("Attempt evaluation failed")
+        return error("Could not save evaluation", 500)
+
+
 @app.errorhandler(404)
 def not_found(_):
     return error("Route not found", 404)
