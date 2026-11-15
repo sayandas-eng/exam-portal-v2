@@ -1,7 +1,7 @@
 (() => {
  const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
  let exams=[],student=null,selected=null,attempt=null,questions=[],answers={},index=0,deadline=0,ticker=null,saving=Promise.resolve(),submitting=false;
- const notice=t=>{const el=$("#message");el.textContent=t;el.classList.add("show")};
+ const notice=t=>{const el=$("#auth-screen").classList.contains("hidden")?$("#message"):$("#auth-message");el.textContent=t;el.classList.add("show")};
  async function api(url,opts={}){const r=await fetch(url,{...opts,headers:{"Content-Type":"application/json",...(opts.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||"Request failed");return d}
  function showAccount(user){student=user;$("#auth-screen").classList.add("hidden");$("#listing-screen").classList.remove("hidden");$("#student-greeting").textContent=user.full_name+" · "+user.student_class;$("#logout").classList.remove("hidden");loadExams()}
  function switchAuth(mode){const reg=mode==="register";$("#login-form").classList.toggle("hidden",reg);$("#register-form").classList.toggle("hidden",!reg);$("#login-tab").classList.toggle("active",!reg);$("#register-tab").classList.toggle("active",reg)}
