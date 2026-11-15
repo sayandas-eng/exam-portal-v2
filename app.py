@@ -117,13 +117,18 @@ def normalize_student_class(value):
 def protect_student_mutations():
     if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
         return None
-    if request.endpoint == "student_login" or request.endpoint in ("admin_session_login", "admin_session_logout") or not student_required():
+    if request.endpoint in ("student_login", "admin_session_login", "admin_session_logout"):
         return None
-    if request.path.startswith(("/api/student/", "/api/exams/", "/api/attempts/")):
+    if request.path.startswith(("/api/student/", "/api/exams/", "/api/attempts/")) and student_required():
         expected = session.get("csrf_token", "")
         supplied = request.headers.get("X-CSRF-Token", "")
         if not expected or not supplied or not hmac.compare_digest(expected, supplied):
             return error("Your session security token is missing or expired. Please sign in again.", 403)
+    if request.path.startswith("/api/admin/") and session.get("admin_authenticated"):
+        expected = session.get("admin_csrf_token", "")
+        supplied = request.headers.get("X-Admin-CSRF", "")
+        if not expected or not supplied or not hmac.compare_digest(expected, supplied):
+            return error("Admin session security token is missing or expired. Please sign in again.", 403)
     return None
 
 
