@@ -381,6 +381,29 @@ def attempt_result(attempt_id):
 
 
 
+
+
+@app.get("/api/student/attempts")
+def student_attempts():
+    if not student_required():
+        return error("Student sign-in required", 401)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT a.id, a.status, a.started_at, a.submitted_at, a.evaluated_at,
+                   e.title AS exam_title, e.subject, e.total_marks,
+                   CASE WHEN a.status='evaluated' THEN
+                     COALESCE((SELECT SUM(ev.final_marks)
+                               FROM portal_v2_evaluations ev
+                               WHERE ev.attempt_id=a.id), 0)
+                   ELSE NULL END AS obtained_marks
+            FROM portal_v2_attempts a
+            JOIN portal_v2_exams e ON e.id=a.exam_id
+            WHERE a.student_user_id=%s
+            ORDER BY a.started_at DESC
+        """, (session["student_user_id"],))
+        return jsonify({"ok": True, "attempts": cur.fetchall()})
+
+
 @app.get("/teacher")
 def teacher_portal():
     return render_template("teacher.html")
