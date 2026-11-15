@@ -918,8 +918,7 @@ def download_attempt_result_pdf(attempt_id):
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
-                   a.submitted_at, a.evaluated_at,
-                   e.title AS exam_title, e.subject, e.total_marks
+                   a.submitted_at, e.total_marks
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE a.id=%s
@@ -930,8 +929,8 @@ def download_attempt_result_pdf(attempt_id):
         if result["status"] != "evaluated":
             return error("The result PDF is available after the teacher finalises the marks.", 409)
         cur.execute("""
-            SELECT COALESCE(SUM(q.marks), 0) AS full_marks,
-                   COALESCE(SUM(ev.final_marks), 0) AS obtained_marks
+            SELECT COALESCE(SUM(ev.final_marks), 0) AS obtained_marks,
+                   COALESCE(SUM(q.marks), 0) AS total_marks
             FROM portal_v2_questions q
             JOIN portal_v2_attempts a ON a.exam_id=q.exam_id
             LEFT JOIN portal_v2_evaluations ev
@@ -950,51 +949,53 @@ def download_attempt_result_pdf(attempt_id):
     if submitted:
         if submitted.tzinfo is None:
             submitted = submitted.replace(tzinfo=timezone.utc)
-        submitted_text = submitted.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d %B %Y, %I:%M:%S %p IST")
+        submitted_text = submitted.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d %B %Y, %I:%M %p IST")
     else:
         submitted_text = "Not available"
 
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=52, leftMargin=52, topMargin=58, bottomMargin=52)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=64, leftMargin=64, topMargin=90, bottomMargin=72)
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("ResultTitle", parent=styles["Title"], alignment=TA_CENTER, textColor=colors.HexColor("#172554"), spaceAfter=8)
-    subtitle_style = ParagraphStyle("ResultSubtitle", parent=styles["Normal"], alignment=TA_CENTER, textColor=colors.HexColor("#64748b"), spaceAfter=24)
-    story = [
-        Paragraph("EXAMINATION RESULT", title_style),
-        Paragraph("Exam Portal V2 · Official result summary", subtitle_style),
-        Spacer(1, 12),
-    ]
+    title_style = ParagraphStyle(
+        "CompactResultTitle", parent=styles["Title"], alignment=TA_CENTER,
+        textColor=colors.HexColor("#172554"), fontSize=20, leading=26, spaceAfter=8
+    )
+    subtitle_style = ParagraphStyle(
+        "CompactResultSubtitle", parent=styles["Normal"], alignment=TA_CENTER,
+        textColor=colors.HexColor("#64748b"), fontSize=9, spaceAfter=28
+    )
     rows = [
         ["Student name", str(result["student_name"])],
         ["Class", str(result["student_class"])],
-        ["Examination", str(result["exam_title"])],
-        ["Subject", str(result["subject"] or "—")],
-        ["Submission date & time", submitted_text],
-        ["Full marks", f'{float(marks["full_marks"]):g}'],
-        ["Obtained marks", f'{float(marks["obtained_marks"]):g}'],
+        ["Marks obtained", f'{float(marks["obtained_marks"]):g}'],
+        ["Total marks", f'{float(marks["total_marks"]):g}'],
+        ["Date & time", submitted_text],
     ]
-    table = Table(rows, colWidths=[155, 335], hAlign="LEFT")
+    table = Table(rows, colWidths=[150, 310], hAlign="CENTER")
     table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f1f5f9")),
-        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#0f172a")),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eef2ff")),
+        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#172033")),
         ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
         ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
-        ("FONTSIZE", (0, 0), (-1, -1), 11),
-        ("LEADING", (0, 0), (-1, -1), 16),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+        ("FONTSIZE", (0, 0), (-1, -1), 12),
+        ("LEADING", (0, 0), (-1, -1), 18),
+        ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#d8deeb")),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 12),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-        ("TOPPADDING", (0, 0), (-1, -1), 11),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 11),
+        ("LEFTPADDING", (0, 0), (-1, -1), 14),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+        ("TOPPADDING", (0, 0), (-1, -1), 14),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
     ]))
-    story.extend([table, Spacer(1, 30), Paragraph("This result reflects the marks finalised by the teacher.", styles["Italic"])])
+    story = [
+        Paragraph("EXAMINATION RESULT", title_style),
+        Paragraph("Official student marks summary", subtitle_style),
+        table,
+    ]
     doc.build(story)
     buffer.seek(0)
     safe_name = "".join(ch for ch in str(result["student_name"]) if ch.isalnum() or ch in (" ", "-", "_")).strip().replace(" ", "_") or "student"
     return send_file(buffer, mimetype="application/pdf", as_attachment=True,
                      download_name=f"{safe_name}_result.pdf")
-
 
 @app.errorhandler(404)
 def not_found(_):
