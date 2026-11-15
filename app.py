@@ -224,7 +224,7 @@ def publish_exam(exam_id):
 @app.post("/api/exams/<exam_id>/start")
 def start_exam(exam_id):
     if not student_required():
-        return error("Please sign in with your student account first", 401)
+        return error("Please sign in first", 401)
     data = request.get_json(silent=True) or {}
     with db() as conn, conn.cursor() as cur:
         name, student_class = session["student_name"], session["student_class"]
