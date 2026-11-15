@@ -15,8 +15,20 @@
  async function loadHistory(){
   const host=$("#history-list");if(!host)return;host.innerHTML='<div class="loading">Loading your examination history…</div>';
   try{const d=await api("/api/student/attempts");const rows=d.attempts||[];
-   host.innerHTML=rows.length?rows.map(a=>{const status=a.status==="evaluated"?"Evaluated":a.status==="submitted"?"Submitted":"In progress";const marks=a.status==="evaluated"?'<strong class="history-marks">'+Number(a.obtained_marks||0)+' / '+Number(a.total_marks||0)+' marks</strong>':'<span class="muted">Marks pending</span>';const date=a.submitted_at||a.started_at;return '<article class="history-card"><div class="history-main"><div><h3>'+esc(a.exam_title)+'</h3><p>'+esc(a.subject||"")+' · '+new Date(date).toLocaleString()+'</p></div><span class="status-pill '+esc(a.status)+'">'+status+'</span></div><div class="history-bottom">'+marks+(a.status==="evaluated"?'<button class="button secondary" data-result="'+esc(a.id)+'">View result →</button>':'')+'</div><div class="history-result" id="result-'+esc(a.id)+'"></div></article>'}).join(""):'<div class="empty">You have not started an examination yet. Your attempts will appear here.</div>';
+   host.innerHTML=rows.length?rows.map(a=>{const status=a.status==="evaluated"?"Evaluated":a.status==="submitted"?"Submitted":"In progress";const marks=a.status==="evaluated"?'<strong class="history-marks">'+Number(a.obtained_marks||0)+' / '+Number(a.total_marks||0)+' marks</strong>':'<span class="muted">Marks pending</span>';const date=a.submitted_at||a.started_at;const action=a.status==="evaluated"?'<button class="button secondary" data-result="'+esc(a.id)+'">View result →</button>':a.status==="in_progress"?'<button class="button primary" data-resume="'+esc(a.id)+'">Resume exam →</button>':'';return '<article class="history-card"><div class="history-main"><div><h3>'+esc(a.exam_title)+'</h3><p>'+esc(a.subject||"")+' · '+new Date(date).toLocaleString()+'</p></div><span class="status-pill '+esc(a.status)+'">'+status+'</span></div><div class="history-bottom">'+marks+action+'</div><div class="history-result" id="result-'+esc(a.id)+'"></div></article>'}).join(""):'<div class="empty">You have not started an examination yet. Your attempts will appear here.</div>';
   }catch(e){host.innerHTML='<div class="empty">Could not load examination history.</div>';notice(e.message)}
+ }
+
+ async function resumeAttempt(id,button){
+  if(button){button.disabled=true;button.textContent="Resuming…"}
+  try{
+   const d=await api("/api/attempts/"+encodeURIComponent(id)+"/resume");
+   attempt=d.attempt;questions=d.questions||[];answers={};questions.forEach(q=>{if(q.answer_text||q.selected_option)answers[q.id]={answer_text:q.answer_text,selected_option:q.selected_option}});
+   index=0;deadline=new Date(attempt.exam_deadline).getTime();selected={title:attempt.title,subject:attempt.subject,topic:attempt.topic};
+   $("#listing-screen").classList.add("hidden");$("#exam-screen").classList.remove("hidden");$("#exam-title").textContent=selected.title;$("#exam-subject").textContent=selected.subject+" · "+selected.topic;$("#student-label").textContent=student.full_name+" · "+student.student_class;
+   render();if(ticker)clearInterval(ticker);ticker=setInterval(tick,1000);tick();
+  }catch(e){notice(e.message);loadHistory()}
+  finally{if(button){button.disabled=false;button.textContent="Resume exam →"}}
  }
  async function showResult(id){
   const panel=$("#result-"+CSS.escape(id));if(!panel)return;panel.innerHTML='<p class="muted">Loading result…</p>';
@@ -25,7 +37,7 @@
   }catch(e){panel.textContent=e.message}
  }
  $("#history-reload").onclick=loadHistory;
- $("#history-list").addEventListener("click",e=>{const b=e.target.closest("[data-result]");if(b)showResult(b.dataset.result)});
+ $("#history-list").addEventListener("click",e=>{const rb=e.target.closest("[data-result]");if(rb)showResult(rb.dataset.result);const resume=e.target.closest("[data-resume]");if(resume)resumeAttempt(resume.dataset.resume,resume)});
  function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
  $("#reload").onclick=loadExams;
  $("#exam-list").onclick=e=>{const b=e.target.closest("[data-start]");if(!b)return;selected=exams.find(x=>x.id===b.dataset.start);$("#dialog-title").textContent=selected.title;$("#dialog-info").textContent=selected.subject+" · "+selected.duration_minutes+" minutes · "+selected.total_marks+" marks";$("#password-field").classList.toggle("hidden",!selected.has_password);$("#start-dialog").showModal()};
