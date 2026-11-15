@@ -404,9 +404,7 @@ def submit_attempt(attempt_id):
             WHERE id=%s AND student_user_id=%s AND status='in_progress'
         """, (attempt_id, session["student_user_id"]))
         cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
-        if expired:
-            return error("The deadline passed. Your saved answers have been submitted.", 409)
-    return jsonify({"ok": True, "status": "submitted"})
+    return jsonify({"ok": True, "status": "submitted", "auto_submitted": expired})
 
 
 @app.get("/api/attempts/<attempt_id>/result")
