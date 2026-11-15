@@ -1,6 +1,7 @@
 import os
 import uuid
 import hmac
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import psycopg
@@ -54,6 +55,20 @@ def student_required():
     return bool(session.get("student_name") and session.get("student_class"))
 
 
+@app.before_request
+def protect_student_mutations():
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return None
+    if request.endpoint == "student_login" or not student_required():
+        return None
+    if request.path.startswith(("/api/student/", "/api/exams/", "/api/attempts/")):
+        expected = session.get("csrf_token", "")
+        supplied = request.headers.get("X-CSRF-Token", "")
+        if not expected or not supplied or not hmac.compare_digest(expected, supplied):
+            return error("Your session security token is missing or expired. Please sign in again.", 403)
+    return None
+
+
 @app.post("/api/student/login")
 @limiter.limit("8 per minute")
 def student_login():
@@ -72,8 +87,13 @@ def student_login():
     session.clear()
     session["student_name"] = name
     session["student_class"] = student_class
+    session["csrf_token"] = secrets.token_urlsafe(32)
     session.permanent = True
-    return jsonify({"ok": True, "student": {"full_name": name, "student_class": student_class}})
+    return jsonify({
+        "ok": True,
+        "student": {"full_name": name, "student_class": student_class},
+        "csrf_token": session["csrf_token"],
+    })
 
 
 @app.get("/api/student/me")
@@ -83,7 +103,7 @@ def student_me():
     return jsonify({"ok": True, "student": {
         "full_name": session["student_name"],
         "student_class": session["student_class"]
-    }})
+    }, "csrf_token": session.get("csrf_token", "")})
 
 
 @app.post("/api/student/logout")
