@@ -29,6 +29,7 @@ STUDENT_EXAM_PASSWORD = os.getenv("STUDENT_EXAM_PASSWORD", "")
 
 
 SCHEMA_READY = False
+CLEANUP_LAST_RUN = 0
 
 
 def db():
@@ -36,6 +37,7 @@ def db():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not configured")
     conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    global CLEANUP_LAST_RUN
     if not SCHEMA_READY:
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS availability_days INTEGER NOT NULL DEFAULT 3")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_until TIMESTAMPTZ")
@@ -47,6 +49,43 @@ def db():
                         SET available_from = published_at
                         WHERE status='live' AND available_from IS NULL AND published_at IS NOT NULL""")
         SCHEMA_READY = True
+    # Opportunistic expiry cleanup: runs at most once per minute per web worker.
+    # Child records are removed before the parent exam to avoid FK violations.
+    import time
+    now_tick = time.time()
+    if now_tick - CLEANUP_LAST_RUN >= 60:
+        with conn.transaction():
+            conn.execute("""
+                DELETE FROM portal_v2_evaluations
+                WHERE attempt_id IN (
+                    SELECT a.id FROM portal_v2_attempts a
+                    JOIN portal_v2_exams e ON e.id=a.exam_id
+                    WHERE e.available_until IS NOT NULL AND e.available_until <= now()
+                )
+            """)
+            conn.execute("""
+                DELETE FROM portal_v2_answers
+                WHERE attempt_id IN (
+                    SELECT a.id FROM portal_v2_attempts a
+                    JOIN portal_v2_exams e ON e.id=a.exam_id
+                    WHERE e.available_until IS NOT NULL AND e.available_until <= now()
+                )
+            """)
+            conn.execute("""
+                DELETE FROM portal_v2_attempts a
+                USING portal_v2_exams e
+                WHERE a.exam_id=e.id AND e.available_until IS NOT NULL AND e.available_until <= now()
+            """)
+            conn.execute("""
+                DELETE FROM portal_v2_questions q
+                USING portal_v2_exams e
+                WHERE q.exam_id=e.id AND e.available_until IS NOT NULL AND e.available_until <= now()
+            """)
+            conn.execute("""
+                DELETE FROM portal_v2_exams
+                WHERE available_until IS NOT NULL AND available_until <= now()
+            """)
+        CLEANUP_LAST_RUN = now_tick
     return conn
 
 
