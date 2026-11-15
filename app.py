@@ -39,6 +39,7 @@ def db():
     if not SCHEMA_READY:
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS availability_days INTEGER NOT NULL DEFAULT 3")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_until TIMESTAMPTZ")
+        conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_from TIMESTAMPTZ")
         conn.execute("""UPDATE portal_v2_exams
                         SET available_until = published_at + (availability_days::text || ' days')::interval
                         WHERE status='live' AND available_until IS NULL AND published_at IS NOT NULL""")
@@ -218,9 +219,9 @@ def public_exams():
         cur.execute("""
             SELECT id, title, subject, NULL::text AS target_class, topic, difficulty,
                    duration_minutes, review_minutes, total_marks, published_at,
-                   available_until, true AS has_password
+                   available_from, available_until, true AS has_password
             FROM portal_v2_exams
-            WHERE status = 'live' AND available_until > now()
+            WHERE status = 'live' AND available_from <= now() AND available_until > now()
             ORDER BY published_at DESC NULLS LAST
         """)
         return jsonify({"ok": True, "exams": cur.fetchall()})
@@ -235,7 +236,7 @@ def admin_list_exams():
             SELECT e.id, e.title, e.subject, e.target_class, e.topic,
                    e.difficulty, CASE WHEN e.status='live' AND e.available_until <= now() THEN 'closed' ELSE e.status END AS status, e.duration_minutes, e.review_minutes,
                    e.total_marks, e.created_at, e.published_at,
-                   e.availability_days, e.available_until,
+                   e.availability_days, e.available_from, e.available_until,
                    COUNT(q.id)::int AS question_count
             FROM portal_v2_exams e
             LEFT JOIN portal_v2_questions q ON q.exam_id=e.id
@@ -270,15 +271,32 @@ def create_exam():
         availability_days = int(data.get("availability_days", 3))
         if not 1 <= availability_days <= 30:
             return error("Availability must be between 1 and 30 days")
+        availability_start = data.get("availability_start")
+        availability_end = data.get("availability_end")
+        if bool(availability_start) != bool(availability_end):
+            return error("Provide both availability_start and availability_end, or neither.")
+        if availability_start:
+            try:
+                availability_start = datetime.fromisoformat(str(availability_start).replace("Z", "+00:00"))
+                availability_end = datetime.fromisoformat(str(availability_end).replace("Z", "+00:00"))
+                if availability_start.tzinfo is None or availability_end.tzinfo is None:
+                    return error("Availability timestamps must include a timezone offset (for example +05:30).")
+                availability_start = availability_start.astimezone(timezone.utc)
+                availability_end = availability_end.astimezone(timezone.utc)
+                if availability_end <= availability_start:
+                    return error("Availability end must be later than availability start.")
+            except (TypeError, ValueError):
+                return error("Use valid ISO 8601 availability timestamps with timezone offsets.")
         with db() as conn, conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO portal_v2_exams
                 (id, title, subject, target_class, topic, difficulty, status,
-                 exam_password_hash, duration_minutes, review_minutes, total_marks, availability_days)
-                VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s)
+                 exam_password_hash, duration_minutes, review_minutes, total_marks, availability_days,
+                 available_from, available_until)
+                VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s)
             """, (exam_id, data["title"], data["subject"], data.get("target_class"),
                   data["topic"], data.get("difficulty", "moderate"), password_hash,
-                  duration, review, total, availability_days))
+                  duration, review, total, availability_days, availability_start, availability_end))
             for index, q in enumerate(questions, start=1):
                 qtype = q.get("question_type", "mcq")
                 if qtype not in ("mcq", "saq", "laq"):
@@ -315,17 +333,23 @@ def publish_exam(exam_id):
         cur.execute("SELECT COUNT(*) AS n FROM portal_v2_questions WHERE exam_id=%s", (exam_id,))
         if cur.fetchone()["n"] == 0:
             return error("An exam must contain questions before publishing")
-        cur.execute("SELECT exam_password_hash, availability_days FROM portal_v2_exams WHERE id=%s", (exam_id,))
+        cur.execute("SELECT exam_password_hash, availability_days, available_from, available_until FROM portal_v2_exams WHERE id=%s", (exam_id,))
         password_row = cur.fetchone()
-        availability_days = password_row["availability_days"] if password_row else 3
         if not password_row or not password_row["exam_password_hash"]:
             return error("The fixed student password is not configured for this exam", 500)
+        now = datetime.now(timezone.utc)
+        starts_at = password_row["available_from"] or now
+        ends_at = password_row["available_until"] or (starts_at + timedelta(days=password_row["availability_days"] or 3))
+        if ends_at <= starts_at:
+            return error("Availability end must be later than availability start.")
+        if ends_at <= now:
+            return error("This exam's availability end is already in the past.")
         cur.execute("""
             UPDATE portal_v2_exams
             SET status='live', published_at=now(),
-                available_until=now() + (availability_days::text || ' days')::interval
+                available_from=%s, available_until=%s
             WHERE id=%s AND status IN ('draft','paused') RETURNING id
-        """, (exam_id,))
+        """, (starts_at, ends_at, exam_id))
         if not cur.fetchone():
             return error("Exam not found or cannot be published", 404)
         cur.execute("""
@@ -333,9 +357,10 @@ def publish_exam(exam_id):
             VALUES ('admin', 'exam_published', 'exam', %s)
         """, (exam_id,))
     with db() as conn, conn.cursor() as cur:
-        cur.execute("SELECT available_until FROM portal_v2_exams WHERE id=%s", (exam_id,))
-        expiry = cur.fetchone()["available_until"]
-    return jsonify({"ok": True, "exam_id": exam_id, "status": "live", "available_until": expiry})
+        cur.execute("SELECT available_from, available_until FROM portal_v2_exams WHERE id=%s", (exam_id,))
+        window = cur.fetchone()
+    return jsonify({"ok": True, "exam_id": exam_id, "status": "live",
+                    "available_from": window["available_from"], "available_until": window["available_until"]})
 
 
 @app.post("/api/exams/<exam_id>/start")
@@ -347,7 +372,7 @@ def start_exam(exam_id):
         name, student_class = session["student_name"], session["student_class"]
         cur.execute("""
             SELECT id, target_class, exam_password_hash, duration_minutes, review_minutes, available_until
-            FROM portal_v2_exams WHERE id=%s AND status='live' AND available_until > now()
+            FROM portal_v2_exams WHERE id=%s AND status='live' AND available_from <= now() AND available_until > now()
         """, (exam_id,))
         exam = cur.fetchone()
         if not exam:
@@ -394,7 +419,7 @@ def resume_attempt(attempt_id):
         if attempt["status"] != "in_progress":
             return error("This attempt is no longer in progress", 409)
         now = datetime.now(timezone.utc)
-        if attempt["exam_status"] != "live" or now >= attempt["available_until"]:
+        if attempt["exam_status"] != "live" or now < attempt["available_from"] or now >= attempt["available_until"]:
             cur.execute("UPDATE portal_v2_attempts SET status='submitted', submitted_at=now() WHERE id=%s AND status='in_progress'", (attempt_id,))
             cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
             return error("The examination availability window has closed.", 409)
@@ -479,7 +504,7 @@ def submit_attempt(attempt_id):
             return error("Attempt not found", 404)
         if row["status"] != "in_progress":
             return error("Attempt already submitted", 409)
-        expired = (datetime.now(timezone.utc) >= row["available_until"] or row["exam_status"] != "live" or datetime.now(timezone.utc) > row["review_deadline"])
+        expired = (datetime.now(timezone.utc) < row["available_from"] or datetime.now(timezone.utc) >= row["available_until"] or row["exam_status"] != "live" or datetime.now(timezone.utc) > row["review_deadline"])
         cur.execute("""
             UPDATE portal_v2_attempts SET status='submitted', submitted_at=now()
             WHERE id=%s AND student_name=%s AND student_class=%s AND status='in_progress'
