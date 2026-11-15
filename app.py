@@ -207,10 +207,20 @@ def student_login():
     if not STUDENT_EXAM_PASSWORD or not hmac.compare_digest(password, STUDENT_EXAM_PASSWORD):
         return error("Incorrect examination password", 401)
     with db() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id FROM portal_v2_exams WHERE status='live' AND available_from <= now() AND available_until > now() ORDER BY published_at DESC LIMIT 1")
+        cur.execute("""
+            SELECT e.id
+            FROM portal_v2_exams e
+            WHERE e.status='live' AND e.available_from <= now() AND e.available_until > now()
+              AND NOT EXISTS (
+                SELECT 1 FROM portal_v2_attempts a
+                WHERE a.exam_id=e.id AND a.student_name=%s AND a.student_class=%s
+              )
+            ORDER BY e.published_at DESC
+            LIMIT 1
+        """, (name, student_class))
         matched_exam = cur.fetchone()
     if not matched_exam:
-        return error("There are no examinations currently open.", 403)
+        return error("There are no new examinations available for you right now. You may have already completed the open exams.", 403)
     session.clear()
     session["student_name"] = name
     session["student_class"] = student_class
@@ -284,8 +294,13 @@ def public_exams():
                    available_from, available_until, true AS has_password
             FROM portal_v2_exams
             WHERE status = 'live' AND available_from <= now() AND available_until > now()
+              AND NOT EXISTS (
+                SELECT 1 FROM portal_v2_attempts a
+                WHERE a.exam_id=portal_v2_exams.id
+                  AND a.student_name=%s AND a.student_class=%s
+              )
             ORDER BY published_at DESC NULLS LAST
-        """)
+        """, (session["student_name"], session["student_class"]))
         return jsonify({"ok": True, "exams": cur.fetchall()})
 
 
@@ -432,6 +447,32 @@ def start_exam(exam_id):
     data = request.get_json(silent=True) or {}
     with db() as conn, conn.cursor() as cur:
         name, student_class = session["student_name"], session["student_class"]
+        # Serialize starts for the same exam/student pair so two simultaneous requests
+        # cannot create duplicate attempts.
+        lock_key = f"{exam_id}:{name.casefold()}:{student_class.casefold()}"
+        cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (lock_key,))
+        cur.execute("""
+            SELECT id, status, exam_deadline, review_deadline
+            FROM portal_v2_attempts
+            WHERE exam_id=%s AND student_name=%s AND student_class=%s
+            ORDER BY started_at ASC
+            LIMIT 1
+            FOR UPDATE
+        """, (exam_id, name, student_class))
+        previous_attempt = cur.fetchone()
+        if previous_attempt:
+            if previous_attempt["status"] == "in_progress":
+                now_check = datetime.now(timezone.utc)
+                if now_check > previous_attempt["review_deadline"]:
+                    cur.execute("""
+                        UPDATE portal_v2_attempts
+                        SET status='submitted', submitted_at=COALESCE(submitted_at, now())
+                        WHERE id=%s AND status='in_progress'
+                    """, (previous_attempt["id"],))
+                    cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (previous_attempt["id"],))
+                    return error("Your previous attempt has expired and has been submitted. Retakes are not allowed.", 409)
+                return error("You have already started this exam. Please resume your existing attempt from My examinations.", 409)
+            return error("You have already submitted this exam. Each student can take an exam only once.", 409)
         cur.execute("""
             SELECT id, target_class, exam_password_hash, duration_minutes, review_minutes, available_from, available_until
             FROM portal_v2_exams WHERE id=%s AND status='live' AND available_from <= now() AND available_until > now()
