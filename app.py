@@ -70,7 +70,7 @@ def db():
 
 
 def purge_expired_exams():
-    """Delete submissions when the full exam + review lifecycle ends."""
+    """Archive expired exams while retaining student submissions and results."""
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT id FROM portal_v2_exams
@@ -207,7 +207,7 @@ def student_login():
     if not STUDENT_EXAM_PASSWORD or not hmac.compare_digest(password, STUDENT_EXAM_PASSWORD):
         return error("Incorrect examination password", 401)
     with db() as conn, conn.cursor() as cur:
-        # The final day of the configured lifecycle is reserved for teacher review.
+        # Reserve the final day for teacher review only on multi-day exam windows; short scheduled sessions use their full window.
         cur.execute("""
             SELECT e.id FROM portal_v2_exams e
             WHERE e.status='live' AND e.available_from <= now()
@@ -306,7 +306,7 @@ def public_exams():
                    duration_minutes, review_minutes, total_marks, published_at,
                    available_from, available_until, true AS has_password
             FROM portal_v2_exams
-            WHERE status = 'live' AND available_from <= now() AND now() < (available_until - interval '1 day')
+            WHERE status = 'live' AND available_from <= now() AND now() < (CASE WHEN available_until - available_from > interval '1 day' THEN available_until - interval '1 day' ELSE available_until END)
               AND NOT EXISTS (
                 SELECT 1 FROM portal_v2_attempts a
                 WHERE a.exam_id=portal_v2_exams.id
@@ -516,9 +516,9 @@ def start_exam(exam_id):
             return error("You have already submitted this exam. Each student can take an exam only once.", 409)
         cur.execute("""
             SELECT id, target_class, exam_password_hash, duration_minutes, review_minutes, available_from,
-                   available_until, (available_until - interval '1 day') AS student_until
+                   available_until, (CASE WHEN available_until - available_from > interval '1 day' THEN available_until - interval '1 day' ELSE available_until END) AS student_until
             FROM portal_v2_exams WHERE id=%s AND status='live' AND available_from <= now()
-              AND now() < (available_until - interval '1 day')
+              AND now() < (CASE WHEN available_until - available_from > interval '1 day' THEN available_until - interval '1 day' ELSE available_until END)
         """, (exam_id,))
         exam = cur.fetchone()
         if not exam:
