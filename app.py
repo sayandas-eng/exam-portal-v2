@@ -155,7 +155,13 @@ def admin_session_login():
 
 @app.get("/api/admin/session")
 def admin_session_status():
-    return jsonify({"ok": bool(session.get("admin_authenticated")), "csrf_token": session.get("admin_csrf_token", "")})
+    response = jsonify({"ok": bool(session.get("admin_authenticated")), "csrf_token": session.get("admin_csrf_token", "")})
+    # Never cache authentication state: a cached logged-out response can make the
+    # teacher/results page ask for credentials again after the admin has signed in.
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.post("/api/admin/session/logout")
