@@ -57,3 +57,6 @@ header{gap:24px}
  .teacher-back-links a{flex:1;padding:9px 8px;font-size:11px}
  #connected-panel{width:100%;margin-left:0;justify-content:space-between;white-space:normal}
 }
+
+/* Keep the connected panel hidden when the shared admin session is not active. */
+#connected-panel.hidden{display:none!important}
