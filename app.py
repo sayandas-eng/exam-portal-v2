@@ -1093,7 +1093,7 @@ def download_attempt_result_pdf(attempt_id):
         parts.append(Paragraph(f'<b>Marks awarded:</b> {float(awarded):g} / {float(q["maximum_marks"]):g}', small_style))
         story.append(KeepTogether(parts))
         story.append(Spacer(1, 10))
-    doc.build(story, onPageEnd=add_pdf_branding)
+    doc.build(story, onFirstPage=add_pdf_branding, onLaterPages=add_pdf_branding)
     buffer.seek(0)
     safe_name = "".join(ch for ch in str(result["student_name"]) if ch.isalnum() or ch in (" ", "-", "_")).strip().replace(" ", "_") or "student"
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=f"{safe_name}_exam_result.pdf")
@@ -1192,7 +1192,7 @@ def download_all_student_rankings_pdf():
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ]))
         story.extend([table, Spacer(1, 18)])
-    doc.build(story, onPageEnd=add_pdf_branding)
+    doc.build(story, onFirstPage=add_pdf_branding, onLaterPages=add_pdf_branding)
     buffer.seek(0)
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name="student_rankings.pdf")
 
