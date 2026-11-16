@@ -11,6 +11,8 @@
   };
   async function api(path, options={}) {
     const headers = {"Content-Type":"application/json", ...(options.headers||{})};
+    const savedAdminToken = localStorage.getItem("examPortalAdminToken") || "";
+    if (savedAdminToken) headers["X-Admin-Session"] = savedAdminToken;
     if (adminConnected && adminCsrf) headers["X-Admin-CSRF"] = adminCsrf;
     const response = await fetch(path, {...options, headers, credentials:"same-origin", cache:"no-store"});
     const payload = await response.json().catch(() => ({}));
@@ -70,6 +72,7 @@
       const response=await fetch("/api/admin/session/login",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",cache:"no-store",body:JSON.stringify({username:$("#admin-username").value.trim(),password:$("#admin-password").value})});
       const data=await response.json(); if(!response.ok) throw new Error(data.error||"Login failed");
       adminConnected=true; adminCsrf=data.csrf_token||"";
+      if (data.admin_token) localStorage.setItem("examPortalAdminToken", data.admin_token);
       $("#admin-password").value=""; $("#admin-lock").hidden=true;
       $("#admin-session-label").textContent="Secure session active";
       $("#logout-button").classList.remove("hidden");
@@ -79,7 +82,8 @@
   }
   $("#admin-login-form").addEventListener("submit",loginAdmin);
   $("#logout-button").addEventListener("click", async () => {
-    await fetch("/api/admin/session/logout",{method:"POST"});
+    await fetch("/api/admin/session/logout",{method:"POST",credentials:"same-origin"});
+    localStorage.removeItem("examPortalAdminToken");
     adminConnected=false; adminCsrf=""; exams=[];
     $("#admin-lock").hidden=false; $("#admin-username").value=""; $("#admin-password").value="";
     $("#admin-session-label").textContent="Workspace locked";
@@ -87,7 +91,8 @@
   });
   async function initAdmin() {
     try {
-      const r=await fetch("/api/admin/session",{credentials:"same-origin",cache:"no-store"}), d=await r.json();
+      const savedAdminToken = localStorage.getItem("examPortalAdminToken") || "";
+      const r=await fetch("/api/admin/session",{credentials:"same-origin",cache:"no-store",headers:savedAdminToken?{"X-Admin-Session":savedAdminToken}:{}}), d=await r.json();
       adminConnected=!!d.ok; adminCsrf=d.csrf_token||"";
       if(adminConnected) {
         $("#admin-lock").hidden=true; $("#admin-session-label").textContent="Secure session active";
