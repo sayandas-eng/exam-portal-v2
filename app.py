@@ -70,15 +70,20 @@ def db():
 
 
 def purge_expired_exams():
-    """Archive expired exams without deleting student attempts, answers or results."""
+    """Delete submissions when the full exam + review lifecycle ends."""
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
-            UPDATE portal_v2_exams
-            SET status='archived'
-            WHERE status='live'
-              AND available_until IS NOT NULL
-              AND available_until <= now()
+            SELECT id FROM portal_v2_exams
+            WHERE status IN ('live', 'deleted')
+              AND available_until IS NOT NULL AND available_until <= now()
+            FOR UPDATE
         """)
+        expired_ids = [row["id"] for row in cur.fetchall()]
+        if expired_ids:
+            cur.execute("DELETE FROM portal_v2_evaluations WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id = ANY(%s))", (expired_ids,))
+            cur.execute("DELETE FROM portal_v2_answers WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id = ANY(%s))", (expired_ids,))
+            cur.execute("DELETE FROM portal_v2_attempts WHERE exam_id = ANY(%s)", (expired_ids,))
+            cur.execute("UPDATE portal_v2_exams SET status='archived' WHERE id = ANY(%s)", (expired_ids,))
 
 
 def _expiry_cleanup_loop():
@@ -198,37 +203,24 @@ def student_login():
     if not STUDENT_EXAM_PASSWORD or not hmac.compare_digest(password, STUDENT_EXAM_PASSWORD):
         return error("Incorrect examination password", 401)
     with db() as conn, conn.cursor() as cur:
-        # A student may sign in only while an exam for their class is live.
-        # This check is independent of prior attempts so students can still
-        # access their history/results while another eligible exam is live.
+        # The final day of the configured lifecycle is reserved for teacher review.
         cur.execute("""
-            SELECT e.id
-            FROM portal_v2_exams e
-            WHERE e.status='live'
-              AND e.available_from <= now()
-              AND e.available_until > now()
+            SELECT e.id FROM portal_v2_exams e
+            WHERE e.status='live' AND e.available_from <= now()
+              AND now() < (e.available_until - interval '1 day')
               AND (e.target_class IS NULL OR lower(trim(e.target_class)) = lower(%s))
-            ORDER BY e.published_at DESC NULLS LAST
-            LIMIT 1
+            ORDER BY e.published_at DESC NULLS LAST LIMIT 1
         """, (student_class,))
         active_exam = cur.fetchone()
-        cur.execute("""
-            SELECT EXISTS (
-                SELECT 1 FROM portal_v2_attempts a
-                WHERE lower(trim(a.student_name)) = lower(trim(%s))
-                  AND lower(trim(a.student_class)) = lower(trim(%s))
-            ) AS has_history
-        """, (name, student_class))
-        has_history = cur.fetchone()["has_history"]
-        if not active_exam and not has_history:
-            return error("No examination is live for your class, and no previous examination record was found. Please try again when your teacher publishes an exam.", 403)
+        if not active_exam:
+            return error("No examination is currently open for students in your class. The exam may be in its teacher-review period or may have ended.", 403)
 
         cur.execute("""
             SELECT e.id
             FROM portal_v2_exams e
             WHERE e.status='live'
               AND e.available_from <= now()
-              AND e.available_until > now()
+              AND now() < (e.available_until - interval '1 day')
               AND (e.target_class IS NULL OR lower(trim(e.target_class)) = lower(%s))
               AND NOT EXISTS (
                 SELECT 1 FROM portal_v2_attempts a
@@ -310,7 +302,7 @@ def public_exams():
                    duration_minutes, review_minutes, total_marks, published_at,
                    available_from, available_until, true AS has_password
             FROM portal_v2_exams
-            WHERE status = 'live' AND available_from <= now() AND available_until > now()
+            WHERE status = 'live' AND available_from <= now() AND now() < (available_until - interval '1 day')
               AND NOT EXISTS (
                 SELECT 1 FROM portal_v2_attempts a
                 WHERE a.exam_id=portal_v2_exams.id
@@ -519,18 +511,20 @@ def start_exam(exam_id):
                 return error("You have already started this exam. Please resume your existing attempt from My examinations.", 409)
             return error("You have already submitted this exam. Each student can take an exam only once.", 409)
         cur.execute("""
-            SELECT id, target_class, exam_password_hash, duration_minutes, review_minutes, available_from, available_until
-            FROM portal_v2_exams WHERE id=%s AND status='live' AND available_from <= now() AND available_until > now()
+            SELECT id, target_class, exam_password_hash, duration_minutes, review_minutes, available_from,
+                   available_until, (available_until - interval '1 day') AS student_until
+            FROM portal_v2_exams WHERE id=%s AND status='live' AND available_from <= now()
+              AND now() < (available_until - interval '1 day')
         """, (exam_id,))
         exam = cur.fetchone()
         if not exam:
             return error("Exam not found or not currently live", 404)
-        if exam["available_until"] <= datetime.now(timezone.utc):
-            return error("This examination's availability window has closed.", 403)
+        if exam["student_until"] <= datetime.now(timezone.utc):
+            return error("The student examination window has closed. The remaining time is reserved for teacher review.", 403)
         session_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
-        exam_deadline = min(now + timedelta(minutes=exam["duration_minutes"]), exam["available_until"])
-        review_deadline = min(exam_deadline + timedelta(minutes=exam["review_minutes"]), exam["available_until"])
+        exam_deadline = min(now + timedelta(minutes=exam["duration_minutes"]), exam["student_until"])
+        review_deadline = min(exam_deadline + timedelta(minutes=exam["review_minutes"]), exam["student_until"])
         cur.execute("""
             INSERT INTO portal_v2_attempts
             (exam_id, student_name, student_class, student_session_id,
@@ -567,7 +561,7 @@ def resume_attempt(attempt_id):
         if attempt["status"] != "in_progress":
             return error("This attempt is no longer in progress", 409)
         now = datetime.now(timezone.utc)
-        if attempt["exam_status"] != "live" or now < attempt["available_from"] or now >= attempt["available_until"]:
+        if attempt["exam_status"] != "live" or now < attempt["available_from"] or now >= (attempt["available_until"] - timedelta(days=1)):
             cur.execute("UPDATE portal_v2_attempts SET status='submitted', submitted_at=now() WHERE id=%s AND status='in_progress'", (attempt_id,))
             cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
             return error("The examination availability window has closed.", 409)
@@ -601,7 +595,8 @@ def save_answer(attempt_id, question_id):
     selected_option = data.get("selected_option")
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT a.status, a.review_deadline, q.id, e.available_from, e.available_until, e.status AS exam_status
+            SELECT a.status, a.review_deadline, q.id, e.available_from,
+                   (e.available_until - interval '1 day') AS student_until, e.status AS exam_status
             FROM portal_v2_attempts a
             JOIN portal_v2_questions q ON q.exam_id=a.exam_id
             JOIN portal_v2_exams e ON e.id=a.exam_id
@@ -613,7 +608,7 @@ def save_answer(attempt_id, question_id):
             return error("Attempt or question not found", 404)
         if row["status"] != "in_progress":
             return error("The answer window has closed", 409)
-        if row["exam_status"] != "live" or datetime.now(timezone.utc) < row["available_from"] or datetime.now(timezone.utc) >= row["available_until"]:
+        if row["exam_status"] != "live" or datetime.now(timezone.utc) < row["available_from"] or datetime.now(timezone.utc) >= row["student_until"]:
             cur.execute("UPDATE portal_v2_attempts SET status='submitted', submitted_at=now() WHERE id=%s AND status='in_progress'", (attempt_id,))
             cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
             return error("The examination availability window has closed.", 409)
@@ -684,7 +679,8 @@ def submit_attempt(attempt_id):
         return error("Student sign-in required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT a.status, a.review_deadline, e.available_from, e.available_until, e.status AS exam_status
+            SELECT a.status, a.review_deadline, e.available_from,
+                   (e.available_until - interval '1 day') AS student_until, e.status AS exam_status
             FROM portal_v2_attempts a JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE a.id=%s AND a.student_name=%s AND a.student_class=%s FOR UPDATE OF a
         """, (attempt_id, session["student_name"], session["student_class"]))
@@ -693,13 +689,13 @@ def submit_attempt(attempt_id):
             return error("Attempt not found", 404)
         if row["status"] != "in_progress":
             return error("Attempt already submitted", 409)
-        expired = (datetime.now(timezone.utc) < row["available_from"] or datetime.now(timezone.utc) >= row["available_until"] or row["exam_status"] != "live" or datetime.now(timezone.utc) > row["review_deadline"])
+        expired = (datetime.now(timezone.utc) < row["available_from"] or datetime.now(timezone.utc) >= row["student_until"] or row["exam_status"] != "live" or datetime.now(timezone.utc) > row["review_deadline"])
         cur.execute("""
             UPDATE portal_v2_attempts SET status='submitted', submitted_at=now()
             WHERE id=%s AND student_name=%s AND student_class=%s AND status='in_progress'
         """, (attempt_id, session["student_name"], session["student_class"]))
         cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
-        # Automatically grade MCQs and rubric-backed SAQs. LAQs always remain for teacher review.
+        # Auto-grade every question and release a provisional result immediately. LAQs start at zero and can be adjusted later.
         cur.execute("""
             SELECT q.id AS question_id, q.question_type, q.correct_option,
                    q.expected_answer, q.marking_scheme, q.marks,
@@ -724,18 +720,22 @@ def submit_attempt(attempt_id):
                         scheme = __import__("json").loads(scheme)
                     except Exception:
                         scheme = {}
-                marked = _auto_mark_saq(q["answer_text"], q["expected_answer"], scheme, q["marks"])
-                if marked is not None:
-                    auto_marks, feedback = marked
-            if auto_marks is not None:
-                cur.execute("""
-                    INSERT INTO portal_v2_evaluations
-                    (attempt_id, question_id, ai_marks, final_marks, ai_feedback,
-                     reviewed_by, reviewed_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, 'AutoMark', now(), now())
-                    ON CONFLICT (attempt_id, question_id) DO NOTHING
-                """, (attempt_id, q["question_id"], auto_marks, auto_marks, feedback))
-    return jsonify({"ok": True, "status": "submitted", "auto_submitted": expired})
+                auto_marks, feedback = _auto_mark_saq(q["answer_text"], q["expected_answer"], scheme, q["marks"])
+            else:
+                auto_marks = 0.0
+                feedback = "Provisional automatic result: LAQ awaiting optional teacher adjustment."
+            cur.execute("""
+                INSERT INTO portal_v2_evaluations
+                (attempt_id, question_id, ai_marks, final_marks, ai_feedback,
+                 reviewed_by, reviewed_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, 'AutoMark', now(), now())
+                ON CONFLICT (attempt_id, question_id) DO UPDATE SET
+                  ai_marks=EXCLUDED.ai_marks, final_marks=EXCLUDED.final_marks,
+                  ai_feedback=EXCLUDED.ai_feedback, reviewed_by='AutoMark',
+                  reviewed_at=now(), updated_at=now()
+            """, (attempt_id, q["question_id"], auto_marks, auto_marks, feedback))
+        cur.execute("UPDATE portal_v2_attempts SET status='evaluated', evaluated_at=now() WHERE id=%s", (attempt_id,))
+    return jsonify({"ok": True, "status": "evaluated", "result_released": True, "auto_submitted": expired})
 
 
 @app.get("/api/attempts/<attempt_id>/result")
@@ -812,6 +812,7 @@ def admin_list_attempts():
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
+            WHERE e.status='live' AND e.available_until > now()
             GROUP BY a.id, e.id
             ORDER BY a.submitted_at DESC NULLS LAST, a.started_at DESC
         """)
@@ -1050,7 +1051,7 @@ def download_all_student_rankings_pdf():
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
-            WHERE a.status='evaluated'
+            WHERE a.status='evaluated' AND e.status='live' AND e.available_until > now()
             GROUP BY e.id, a.id
             ORDER BY e.title, obtained_marks DESC, a.submitted_at ASC, a.student_name ASC
         """)
