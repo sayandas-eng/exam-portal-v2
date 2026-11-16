@@ -935,7 +935,26 @@ def download_attempt_result_pdf(attempt_id):
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.enums import TA_CENTER
     from reportlab.lib import colors
+    from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
+
+    def add_pdf_branding(canvas, doc):
+        page_width, page_height = A4
+        canvas.saveState()
+        canvas.translate(page_width / 2, page_height / 2)
+        canvas.rotate(35)
+        canvas.setFillColor(colors.HexColor("#64748b"))
+        if hasattr(canvas, "setFillAlpha"):
+            canvas.setFillAlpha(0.13)
+        watermark = "Abhishek Santra English Guidance"
+        canvas.setFont("Helvetica-Bold", 30)
+        canvas.drawCentredString(0, 0, watermark)
+        canvas.restoreState()
+        canvas.saveState()
+        canvas.setFillColor(colors.HexColor("#475569"))
+        canvas.setFont("Helvetica-Bold", 8)
+        canvas.drawRightString(page_width - 42, 22, "Checked By Abhishek Santra")
+        canvas.restoreState()
 
     submitted = result["submitted_at"]
     if submitted:
@@ -1001,7 +1020,7 @@ def download_attempt_result_pdf(attempt_id):
         parts.append(Paragraph(f'<b>Marks awarded:</b> {float(awarded):g} / {float(q["maximum_marks"]):g}', small_style))
         story.append(KeepTogether(parts))
         story.append(Spacer(1, 10))
-    doc.build(story)
+    doc.build(story, onFirstPage=add_pdf_branding, onLaterPages=add_pdf_branding)
     buffer.seek(0)
     safe_name = "".join(ch for ch in str(result["student_name"]) if ch.isalnum() or ch in (" ", "-", "_")).strip().replace(" ", "_") or "student"
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=f"{safe_name}_exam_result.pdf")
@@ -1029,6 +1048,23 @@ def download_all_student_rankings_pdf():
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.enums import TA_CENTER
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+
+    def add_pdf_branding(canvas, doc):
+        page_width, page_height = landscape(A4)
+        canvas.saveState()
+        canvas.translate(page_width / 2, page_height / 2)
+        canvas.rotate(35)
+        canvas.setFillColor(colors.HexColor("#64748b"))
+        if hasattr(canvas, "setFillAlpha"):
+            canvas.setFillAlpha(0.13)
+        canvas.setFont("Helvetica-Bold", 34)
+        canvas.drawCentredString(0, 0, "Abhishek Santra English Guidance")
+        canvas.restoreState()
+        canvas.saveState()
+        canvas.setFillColor(colors.HexColor("#475569"))
+        canvas.setFont("Helvetica-Bold", 8)
+        canvas.drawRightString(page_width - 30, 18, "Checked By Abhishek Santra")
+        canvas.restoreState()
     from xml.sax.saxutils import escape
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=30, leftMargin=30, topMargin=35, bottomMargin=35)
@@ -1043,7 +1079,7 @@ def download_all_student_rankings_pdf():
         story.append(Paragraph("No evaluated student results are available yet.", styles["Normal"]))
     for exam_id, rows in grouped.items():
         first = rows[0]
-        story.append(Paragraph(escape(str(first["exam_title"])) + " — " + escape(str(first["student_class"] or first["target_class"] or "")), styles["Heading2"]))
+        story.append(Paragraph(escape(str(first["exam_title"])), styles["Heading2"]))
         table_rows = [["Rank", "Student name", "Class", "Marks obtained", "Total marks", "Submitted (IST)"]]
         previous_marks = None
         rank = 0
