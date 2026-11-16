@@ -746,35 +746,7 @@ def submit_attempt(attempt_id):
 def attempt_result(attempt_id):
     if not student_required():
         return error("Student sign-in required", 401)
-    with db() as conn, conn.cursor() as cur:
-        cur.execute("""
-            SELECT a.id, a.student_name, a.student_class, a.status,
-                   a.started_at, a.submitted_at, a.evaluated_at,
-                   e.title, e.subject, e.total_marks
-            FROM portal_v2_attempts a JOIN portal_v2_exams e ON e.id=a.exam_id
-            WHERE a.id=%s AND a.student_name=%s AND a.student_class=%s
-        """, (attempt_id, session["student_name"], session["student_class"]))
-        result = cur.fetchone()
-        if not result:
-            return error("Attempt not found", 404)
-        if result["status"] != "evaluated":
-            return jsonify({"ok": True, "result": result, "message": "Evaluation is not complete yet"})
-        cur.execute("""
-            SELECT q.position, q.prompt, q.marks AS maximum_marks,
-                   ans.answer_text, ans.selected_option,
-                   ev.final_marks, ev.ai_feedback, ev.teacher_feedback
-            FROM portal_v2_questions q
-            JOIN portal_v2_attempts a ON a.exam_id=q.exam_id
-            LEFT JOIN portal_v2_answers ans ON ans.question_id=q.id AND ans.attempt_id=a.id
-            LEFT JOIN portal_v2_evaluations ev ON ev.question_id=q.id AND ev.attempt_id=a.id
-            WHERE a.id=%s ORDER BY q.position
-        """, (attempt_id,))
-        result["answers"] = cur.fetchall()
-        result["obtained_marks"] = sum(float(x["final_marks"] or 0) for x in result["answers"])
-        return jsonify({"ok": True, "result": result})
-
-
-
+    return error("Results are not available in the student portal.", 403)
 
 
 @app.get("/api/student/attempts")
