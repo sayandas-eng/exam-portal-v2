@@ -814,7 +814,13 @@ def _auto_evaluate_pending_attempts(cur):
                 (attempt_id, question_id, ai_marks, final_marks, ai_feedback,
                  reviewed_by, reviewed_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, 'AutoMark', now(), now())
-                ON CONFLICT (attempt_id, question_id) DO NOTHING
+                ON CONFLICT (attempt_id, question_id) DO UPDATE SET
+                    ai_marks=EXCLUDED.ai_marks,
+                    final_marks=EXCLUDED.final_marks,
+                    ai_feedback=EXCLUDED.ai_feedback,
+                    reviewed_at=now(), updated_at=now()
+                WHERE portal_v2_evaluations.reviewed_by='AutoMark'
+                  AND portal_v2_evaluations.final_marks IS NULL
             """, (attempt_id, q["question_id"], marks, marks, feedback))
         cur.execute("UPDATE portal_v2_attempts SET status='evaluated', evaluated_at=COALESCE(evaluated_at, now()) WHERE id=%s", (attempt_id,))
 
