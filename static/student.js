@@ -12,8 +12,9 @@
 
  async function loadHistory(){
   const host=$("#history-list");if(!host)return;host.innerHTML='<div class="loading">Loading your examination history…</div>';
-  try{const d=await api("/api/student/attempts");const rows=d.attempts||[];
-   host.innerHTML=rows.length?rows.map(a=>{const status=a.status==="evaluated"?"Evaluated":a.status==="submitted"?"Submitted":"In progress";const marks=a.status==="evaluated"?'<strong class="history-marks">'+Number(a.obtained_marks||0)+' / '+Number(a.total_marks||0)+' marks</strong>':'<span class="muted">Marks pending</span>';const date=a.submitted_at||a.started_at;const action=a.status==="evaluated"?'<button class="button secondary" data-result="'+esc(a.id)+'">View result →</button>':a.status==="in_progress"?'<button class="button primary" data-resume="'+esc(a.id)+'">Resume exam →</button>':'';return '<article class="history-card"><div class="history-main"><div><h3>'+esc(a.exam_title)+'</h3><p>'+esc(a.subject||"")+' · '+new Date(date).toLocaleString()+'</p></div><span class="status-pill '+esc(a.status)+'">'+status+'</span></div><div class="history-bottom">'+marks+action+'</div><div class="history-result" id="result-'+esc(a.id)+'"></div></article>'}).join(""):'<div class="empty">You have not started an examination yet. Your attempts will appear here.</div>';
+  try{const d=await api("/api/student/attempts");const rows=(d.attempts||[]).filter(a=>a.status==="in_progress");
+   const section=$("#history-section");section.classList.toggle("hidden",rows.length===0);
+   host.innerHTML=rows.length?rows.map(a=>{const date=a.started_at;return '<article class="history-card"><div class="history-main"><div><h3>'+esc(a.exam_title)+'</h3><p>'+esc(a.subject||"")+' · Started '+new Date(date).toLocaleString()+'</p></div><span class="status-pill in_progress">In progress</span></div><div class="history-bottom"><button class="button primary" data-resume="'+esc(a.id)+'">Resume exam →</button></div></article>'}).join(""):'<div class="empty">No unfinished examinations.</div>';
   }catch(e){host.innerHTML='<div class="empty">Could not load examination history.</div>';notice(e.message)}
  }
 
@@ -28,14 +29,8 @@
   }catch(e){notice(e.message);loadHistory()}
   finally{if(button){button.disabled=false;button.textContent="Resume exam →"}}
  }
- async function showResult(id){
-  const panel=$("#result-"+CSS.escape(id));if(!panel)return;panel.innerHTML='<p class="muted">Loading result…</p>';
-  try{const d=await api("/api/attempts/"+encodeURIComponent(id)+"/result");const r=d.result;if(r.status!=="evaluated"){panel.textContent="Your result is not ready yet.";return}
-   panel.innerHTML='<div class="result-summary"><strong>'+Number(r.obtained_marks||0)+' / '+Number(r.total_marks||0)+' marks</strong><span>Teacher evaluation completed</span></div>'+(r.answers||[]).map((q,i)=>'<div class="result-question"><b>Q'+(i+1)+'. '+esc(q.prompt)+'</b><p>Your answer: '+esc(q.answer_text||q.selected_option||"Not answered")+'</p><p class="result-feedback">Marks: '+Number(q.final_marks||0)+' / '+Number(q.maximum_marks||0)+(q.teacher_feedback?' · '+esc(q.teacher_feedback):'')+'</p></div>').join("");
-  }catch(e){panel.textContent=e.message}
- }
- $("#history-reload").onclick=loadHistory;
- $("#history-list").addEventListener("click",e=>{const rb=e.target.closest("[data-result]");if(rb)showResult(rb.dataset.result);const resume=e.target.closest("[data-resume]");if(resume)resumeAttempt(resume.dataset.resume,resume)});
+  $("#history-reload").onclick=loadHistory;
+ $("#history-list").addEventListener("click",e=>{const resume=e.target.closest("[data-resume]");if(resume)resumeAttempt(resume.dataset.resume,resume)});
  function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
  $("#reload").onclick=loadExams;
  $("#exam-list").onclick=e=>{const b=e.target.closest("[data-start]");if(!b)return;selected=exams.find(x=>x.id===b.dataset.start);$("#dialog-title").textContent=selected.title;$("#dialog-info").textContent=selected.subject+" · "+selected.duration_minutes+" minutes · "+selected.total_marks+" marks";$("#start-dialog").showModal()};
@@ -50,7 +45,7 @@
  $("#previous").onclick=async()=>{try{await saveCurrent();index=Math.max(0,index-1);render()}catch(_){}};
  $("#next").onclick=async()=>{try{await saveCurrent();index=Math.min(questions.length-1,index+1);render()}catch(_){}};
  $("#back").onclick=()=>{if(confirm("Exit this exam? Your saved answers remain, but the timer continues.")){clearInterval(ticker);$("#exam-screen").classList.add("hidden");$("#listing-screen").classList.remove("hidden")}};
- async function submit(auto=false){if(submitting)return;submitting=true;try{if(auto){await saving}else{await saveCurrent();await saving;if(!confirm("Submit your examination now? You cannot change answers afterwards.")){submitting=false;return}}await api("/api/attempts/"+attempt.id+"/submit",{method:"POST",body:"{}"});clearInterval(ticker);$("#exam-screen").classList.add("hidden");$("#done-screen").classList.remove("hidden");$("#done-copy").textContent=auto?"The time limit ended and your exam was submitted.":"Your answers have been saved and your automatically marked result has been released. You cannot retake this examination.";loadExams();loadHistory();}catch(e){notice(e.message);submitting=false}}
+ async function submit(auto=false){if(submitting)return;submitting=true;try{if(auto){await saving}else{await saveCurrent();await saving;if(!confirm("Submit your examination now? You cannot change answers afterwards.")){submitting=false;return}}await api("/api/attempts/"+attempt.id+"/submit",{method:"POST",body:"{}"});clearInterval(ticker);$("#exam-screen").classList.add("hidden");$("#done-screen").classList.remove("hidden");$("#done-copy").textContent=auto?"The time limit ended and your exam was submitted.":"Your answers have been submitted successfully. Results are not displayed in the student portal.";loadExams();loadHistory();}catch(e){notice(e.message);submitting=false}}
  $("#submit").onclick=()=>submit(false);
  function tick(){const left=Math.max(0,deadline-Date.now());$("#timer").textContent=String(Math.floor(left/60000)).padStart(2,"0")+":"+String(Math.floor(left%60000/1000)).padStart(2,"0");if(left<=0)submit(true)}
  async function init(){try{const d=await api("/api/student/me");csrfToken=d.csrf_token||"";showAccount(d.student)}catch(_){switchAuth("login")}}
