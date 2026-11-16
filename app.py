@@ -23,6 +23,7 @@ from flask import Flask, jsonify, request, render_template, session, send_file
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.security import check_password_hash, generate_password_hash
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY")
@@ -108,12 +109,23 @@ if DATABASE_URL:
     ).start()
 
 
+def valid_admin_session_token():
+    token = request.headers.get("X-Admin-Session", "")
+    if not token or not app.secret_key:
+        return False
+    try:
+        payload = URLSafeTimedSerializer(app.secret_key, salt="exam-portal-admin-session").loads(token, max_age=7 * 24 * 60 * 60)
+        return payload.get("role") == "admin"
+    except (BadSignature, SignatureExpired, AttributeError):
+        return False
+
+
 def admin_required():
     supplied = request.headers.get("X-Admin-Key", "")
     valid_admin = bool(ADMIN_API_KEY and supplied and hmac.compare_digest(supplied, ADMIN_API_KEY))
     mcp_token = os.getenv("MCP_API_TOKEN", "")
     valid_mcp = bool(mcp_token and supplied and hmac.compare_digest(supplied, mcp_token))
-    return valid_admin or valid_mcp or bool(session.get("admin_authenticated"))
+    return valid_admin or valid_mcp or bool(session.get("admin_authenticated")) or valid_admin_session_token()
 
 
 def error(message, status=400):
@@ -150,12 +162,14 @@ def admin_session_login():
     session["admin_authenticated"] = True
     session["admin_csrf_token"] = secrets.token_urlsafe(32)
     session.permanent = True
-    return jsonify({"ok": True, "csrf_token": session["admin_csrf_token"]})
+    admin_token = URLSafeTimedSerializer(app.secret_key, salt="exam-portal-admin-session").dumps({"role": "admin"})
+    return jsonify({"ok": True, "csrf_token": session["admin_csrf_token"], "admin_token": admin_token})
 
 
 @app.get("/api/admin/session")
 def admin_session_status():
-    response = jsonify({"ok": bool(session.get("admin_authenticated")), "csrf_token": session.get("admin_csrf_token", "")})
+    authenticated = bool(session.get("admin_authenticated")) or valid_admin_session_token()
+    response = jsonify({"ok": authenticated, "csrf_token": session.get("admin_csrf_token", "")})
     # Never cache authentication state: a cached logged-out response can make the
     # teacher/results page ask for credentials again after the admin has signed in.
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
