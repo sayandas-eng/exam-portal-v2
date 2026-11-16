@@ -836,7 +836,12 @@ def _auto_evaluate_pending_attempts(cur):
 @app.get("/api/admin/attempts")
 def admin_list_attempts():
     with db() as conn, conn.cursor() as cur:
-        _auto_evaluate_pending_attempts(cur)
+        # Never let a grading/backfill problem hide the submissions list.
+        try:
+            _auto_evaluate_pending_attempts(cur)
+        except Exception:
+            app.logger.exception("Automatic grading backfill failed; returning submissions anyway")
+            conn.rollback()
         cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
                    a.started_at, a.submitted_at, e.id AS exam_id,
