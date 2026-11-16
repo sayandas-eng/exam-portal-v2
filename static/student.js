@@ -2,7 +2,7 @@
  const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
  let exams=[],student=null,selected=null,attempt=null,questions=[],answers={},index=0,deadline=0,ticker=null,saving=Promise.resolve(),submitting=false;
  const notice=t=>{const el=$("#auth-screen").classList.contains("hidden")?$("#message"):$("#auth-message");el.textContent=t;el.classList.add("show")};
- let csrfToken="";
+ let csrfToken="",saveQueue=Promise.resolve();
  async function api(url,opts={}){const headers={"Content-Type":"application/json",...(opts.headers||{})};if(csrfToken)headers["X-CSRF-Token"]=csrfToken;const r=await fetch(url,{...opts,headers});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||"Request failed");return d}
  function showAccount(user){student=user;$("#auth-screen").classList.add("hidden");$("#listing-screen").classList.remove("hidden");$("#student-greeting").textContent=user.full_name+" · "+user.student_class;$("#logout").classList.remove("hidden");loadExams();loadHistory()}
  async function authSubmit(form){const button=form.querySelector('button[type="submit"]');button.disabled=true;button.textContent="Signing in…";try{const data=Object.fromEntries(new FormData(form));const d=await api("/api/student/login",{method:"POST",body:JSON.stringify(data)});csrfToken=d.csrf_token||"";form.reset();showAccount(d.student)}catch(e){notice(e.message)}finally{button.disabled=false;button.textContent="Sign in →"}}
@@ -38,7 +38,20 @@
  $("#start-form").onsubmit=async e=>{e.preventDefault();const form=new FormData(e.currentTarget),b=e.submitter;b.disabled=true;b.textContent="Starting…";try{const d=await api("/api/exams/"+selected.id+"/start",{method:"POST",body:JSON.stringify({})});attempt=d.attempt;questions=d.questions||[];answers={};index=0;deadline=new Date(attempt.review_deadline||attempt.exam_deadline).getTime();$("#start-dialog").close();$("#listing-screen").classList.add("hidden");$("#exam-screen").classList.remove("hidden");$("#exam-title").textContent=selected.title;$("#exam-subject").textContent=selected.subject+" · "+selected.topic;$("#student-label").textContent=student.full_name+" · "+student.student_class;render();ticker=setInterval(tick,1000);tick()}catch(err){notice(err.message)}finally{b.disabled=false;b.textContent="Start examination →"}};
  function answered(a){return !!(a&&(a.answer_text&&a.answer_text.trim()||a.selected_option))}
  function render(){const q=questions[index];if(!q)return;$("#question-count").textContent="QUESTION "+(index+1)+" OF "+questions.length;$("#question-marks").textContent=q.marks+" marks";$("#question-prompt").textContent=q.prompt;$("#progress-fill").style.width=((index+1)/questions.length*100)+"%";$("#question-nav").innerHTML=questions.map((x,i)=>'<button class="nav-q '+(i===index?"current ":"")+(answered(answers[x.id])?"answered":"")+'" data-index="'+i+'">'+(i+1)+'</button>').join("");const a=answers[q.id]||{};if(q.question_type==="mcq"){const opts=Array.isArray(q.options)?q.options:[];$("#answer-area").innerHTML=opts.map((o,i)=>'<label class="answer-option"><input type="radio" name="answer" value="'+String.fromCharCode(65+i)+'" '+(a.selected_option===String.fromCharCode(65+i)?"checked":"")+'><span><b>'+String.fromCharCode(65+i)+'.</b> '+esc(o)+'</span></label>').join("")}else{$("#answer-area").innerHTML='<textarea class="answer-text" id="written-answer" placeholder="Type your answer here…">'+esc(a.answer_text||"")+'</textarea>'}$("#previous").disabled=index===0;$("#next").textContent=index===questions.length-1?"Review answers":"Next question →";renderNavOnly()}
- async function saveCurrent(){const q=questions[index];if(!q)return;let data;if(q.question_type==="mcq"){const v=$('input[name="answer"]:checked');data={selected_option:v?v.value:null,answer_text:null}}else{data={answer_text:$("#written-answer").value,selected_option:null}}if(answered(data))answers[q.id]=data;else delete answers[q.id];$("#save-status").textContent="Saving…";saving=saving.then(()=>api("/api/attempts/"+attempt.id+"/answers/"+q.id,{method:"PUT",body:JSON.stringify(data)}));try{await saving;$("#save-status").textContent="All changes saved"}catch(e){$("#save-status").textContent="Save failed";notice(e.message);throw e}renderNavOnly()}
+ async function saveCurrent(){
+  const q=questions[index];if(!q)return;
+  let data;
+  if(q.question_type==="mcq"){const v=$('input[name="answer"]:checked');data={selected_option:v?v.value:null,answer_text:null}}
+  else{data={answer_text:$("#written-answer")?.value??"",selected_option:null}}
+  if(answered(data))answers[q.id]=data;else delete answers[q.id];
+  $("#save-status").textContent="Saving…";
+  const payload=JSON.stringify(data),url="/api/attempts/"+attempt.id+"/answers/"+q.id;
+  const task=saveQueue.catch(()=>{}).then(()=>api(url,{method:"PUT",body:payload}));
+  saveQueue=task;saving=task;
+  try{await task;$("#save-status").textContent="All changes saved"}
+  catch(e){$("#save-status").textContent="Save failed";notice(e.message);throw e}
+  renderNavOnly()
+ }
  function renderNavOnly(){$$("#question-nav .nav-q").forEach((b,i)=>b.classList.toggle("answered",answered(answers[questions[i].id])));$("#answered-count").textContent=Object.values(answers).filter(answered).length+" answered"}
  $("#answer-area").addEventListener("change",()=>saveCurrent().catch(()=>{}));$("#answer-area").addEventListener("input",e=>{if(e.target.id==="written-answer"){clearTimeout(e.target._save);e.target._save=setTimeout(()=>saveCurrent().catch(()=>{}),700)}});
  $("#question-nav").onclick=async e=>{const b=e.target.closest("[data-index]");if(!b)return;try{await saveCurrent();index=Number(b.dataset.index);render()}catch(_){}};
