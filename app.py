@@ -1079,7 +1079,15 @@ def download_all_student_rankings_pdf():
         story.append(Paragraph("No evaluated student results are available yet.", styles["Normal"]))
     for exam_id, rows in grouped.items():
         first = rows[0]
-        story.append(Paragraph(escape(str(first["exam_title"])), styles["Heading2"]))
+        display_exam_title = str(first["exam_title"] or "")
+        target_class = str(first.get("target_class") or "").strip()
+        if target_class:
+            for separator in (" — ", " – ", " - "):
+                suffix = separator + target_class
+                if display_exam_title.endswith(suffix):
+                    display_exam_title = display_exam_title[:-len(suffix)].rstrip()
+                    break
+        story.append(Paragraph(escape(display_exam_title), styles["Heading2"]))
         table_rows = [["Rank", "Student name", "Class", "Marks obtained", "Total marks", "Submitted (IST)"]]
         previous_marks = None
         rank = 0
@@ -1111,7 +1119,7 @@ def download_all_student_rankings_pdf():
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ]))
         story.extend([table, Spacer(1, 18)])
-    doc.build(story)
+    doc.build(story, onFirstPage=add_pdf_branding, onLaterPages=add_pdf_branding)
     buffer.seek(0)
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name="student_rankings.pdf")
 
