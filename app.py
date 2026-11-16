@@ -212,7 +212,7 @@ def student_login():
             SELECT e.id FROM portal_v2_exams e
             WHERE e.status='live' AND e.available_from <= now()
               AND now() < (CASE WHEN e.available_until - e.available_from > interval '1 day' THEN e.available_until - interval '1 day' ELSE e.available_until END)
-              AND (e.target_class IS NULL OR lower(trim(e.target_class)) = lower(%s))
+              AND (NULLIF(regexp_replace(lower(trim(COALESCE(e.target_class, ''))), '[^a-z0-9]', '', 'g'), '') IS NULL OR regexp_replace(lower(trim(e.target_class)), '[^a-z0-9]', '', 'g') = regexp_replace(lower(trim(%s)), '[^a-z0-9]', '', 'g'))
             ORDER BY e.published_at DESC NULLS LAST LIMIT 1
         """, (student_class,))
         active_exam = cur.fetchone()
@@ -225,7 +225,7 @@ def student_login():
             WHERE e.status='live'
               AND e.available_from <= now()
               AND now() < (CASE WHEN e.available_until - e.available_from > interval '1 day' THEN e.available_until - interval '1 day' ELSE e.available_until END)
-              AND (e.target_class IS NULL OR lower(trim(e.target_class)) = lower(%s))
+              AND (NULLIF(regexp_replace(lower(trim(COALESCE(e.target_class, ''))), '[^a-z0-9]', '', 'g'), '') IS NULL OR regexp_replace(lower(trim(e.target_class)), '[^a-z0-9]', '', 'g') = regexp_replace(lower(trim(%s)), '[^a-z0-9]', '', 'g'))
               AND NOT EXISTS (
                 SELECT 1 FROM portal_v2_attempts a
                 WHERE a.exam_id=e.id AND a.student_name=%s AND a.student_class=%s
