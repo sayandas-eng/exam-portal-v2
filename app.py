@@ -897,16 +897,8 @@ def evaluate_attempt(attempt_id):
                       reviewed_by=EXCLUDED.reviewed_by,
                       reviewed_at=now(), updated_at=now()
                 """, (attempt_id, qid, marks, feedback, reviewer))
-            cur.execute("SELECT COUNT(*) AS n FROM portal_v2_questions q JOIN portal_v2_attempts a ON a.exam_id=q.exam_id WHERE a.id=%s AND q.question_type='laq'", (attempt_id,))
-            total_manual = cur.fetchone()["n"]
-            cur.execute("""
-                SELECT COUNT(*) AS n FROM portal_v2_evaluations ev
-                JOIN portal_v2_questions q ON q.id=ev.question_id
-                WHERE ev.attempt_id=%s AND q.question_type='laq'
-            """, (attempt_id,))
-            reviewed = cur.fetchone()["n"]
-            if reviewed < total_manual:
-                return error("Save marks for every LAQ before finalising the result")
+            # Results are already released automatically at submission.
+            # This endpoint only saves optional teacher corrections to LAQs.
             cur.execute("UPDATE portal_v2_attempts SET status='evaluated', evaluated_at=now() WHERE id=%s", (attempt_id,))
             cur.execute("""
                 INSERT INTO portal_v2_audit_log (actor, action, entity_type, entity_id)
