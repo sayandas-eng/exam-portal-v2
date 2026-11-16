@@ -790,7 +790,7 @@ def admin_attempt_detail(attempt_id):
                    q.prompt, q.options, q.correct_option, q.expected_answer,
                    q.marking_scheme, q.marks AS maximum_marks,
                    ans.answer_text, ans.selected_option,
-                   ev.ai_marks, ev.final_marks, ev.teacher_feedback, ev.reviewed_by
+                   ev.ai_marks, ev.final_marks, ev.ai_feedback, ev.teacher_feedback, ev.reviewed_by
             FROM portal_v2_questions q
             JOIN portal_v2_attempts a ON a.exam_id=q.exam_id
             LEFT JOIN portal_v2_answers ans
@@ -846,7 +846,7 @@ def evaluate_attempt(attempt_id):
                       reviewed_at=now(), updated_at=now()
                 """, (attempt_id, qid, marks, feedback, reviewer))
             # Results are already released automatically at submission.
-            # This endpoint only saves optional teacher corrections to LAQs.
+            # Teacher corrections may override automatic marks for MCQ, SAQ, and LAQ answers.
             cur.execute("UPDATE portal_v2_attempts SET status='evaluated', evaluated_at=now() WHERE id=%s", (attempt_id,))
             cur.execute("""
                 INSERT INTO portal_v2_audit_log (actor, action, entity_type, entity_id)
@@ -1091,7 +1091,7 @@ def download_all_student_rankings_pdf():
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ]))
         story.extend([table, Spacer(1, 18)])
-    doc.build(story, onFirstPage=add_pdf_branding, onLaterPages=add_pdf_branding)
+    doc.build(story, onPageEnd=add_pdf_branding)
     buffer.seek(0)
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name="student_rankings.pdf")
 
