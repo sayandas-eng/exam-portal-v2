@@ -774,7 +774,16 @@ def teacher_portal():
 
 def _auto_evaluate_pending_attempts(cur):
     """Backfill automatic marks for submitted attempts created before auto-grading completed."""
-    cur.execute("SELECT id FROM portal_v2_attempts WHERE status='submitted' ORDER BY submitted_at")
+    cur.execute("""
+        SELECT a.id FROM portal_v2_attempts a
+        WHERE a.status='submitted'
+           OR EXISTS (
+               SELECT 1 FROM portal_v2_evaluations ev
+               WHERE ev.attempt_id=a.id AND ev.final_marks IS NULL
+                 AND ev.reviewed_by='AutoMark'
+           )
+        ORDER BY a.submitted_at
+    """)
     pending = [row["id"] for row in cur.fetchall()]
     for attempt_id in pending:
         cur.execute("""
