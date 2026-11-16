@@ -612,7 +612,7 @@ def save_answer(attempt_id, question_id):
 
 def _normalize_marking_text(value):
     import re
-    return re.sub(r"\\s+", " ", re.sub(r"[^\\w\\s]", " ", str(value or "").lower())).strip()
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", str(value or "").lower())).strip()
 
 
 def _auto_mark_saq(answer, expected_answer, marking_scheme, maximum_marks):
@@ -647,8 +647,8 @@ def _auto_mark_saq(answer, expected_answer, marking_scheme, maximum_marks):
     if expected:
         if normalized == expected:
             return float(maximum_marks), "Automatically marked: the answer matches the expected answer."
-        return 0.0, "Automatically marked: the answer did not match the expected answer."
-    return 0.0, "Automatically marked 0: no answer key or marking criteria were supplied."
+        return None, "Needs teacher review: the answer differs from the reference wording; check meaning before awarding marks."
+    return None, "Needs teacher review: no answer key or marking criteria were supplied."
 
 
 @app.post("/api/attempts/<attempt_id>/submit")
@@ -700,8 +700,8 @@ def submit_attempt(attempt_id):
                         scheme = {}
                 auto_marks, feedback = _auto_mark_saq(q["answer_text"], q["expected_answer"], scheme, q["marks"])
             else:
-                auto_marks = 0.0
-                feedback = "Provisional automatic result: LAQ awaiting optional teacher adjustment."
+                auto_marks = None
+                feedback = "Awaiting teacher review."
             cur.execute("""
                 INSERT INTO portal_v2_evaluations
                 (attempt_id, question_id, ai_marks, final_marks, ai_feedback,
@@ -829,8 +829,6 @@ def evaluate_attempt(attempt_id):
                     return error("Invalid or duplicate question in evaluation")
                 cur.execute("SELECT question_type FROM portal_v2_questions WHERE id=%s", (qid,))
                 question_type = cur.fetchone()["question_type"]
-                if question_type != "laq":
-                    return error("Only LAQ answers can be manually marked. MCQs and SAQs are auto-marked.")
                 seen.add(qid)
                 marks = float(item.get("final_marks", 0))
                 if marks < 0 or marks > maxima[qid]:
@@ -840,7 +838,7 @@ def evaluate_attempt(attempt_id):
                     INSERT INTO portal_v2_evaluations
                     (attempt_id, question_id, ai_marks, final_marks, teacher_feedback,
                      reviewed_by, reviewed_at, updated_at)
-                    VALUES (%s, %s, 0, %s, %s, %s, now(), now())
+                    VALUES (%s, %s, NULL, %s, %s, %s, now(), now())
                     ON CONFLICT (attempt_id, question_id) DO UPDATE SET
                       final_marks=EXCLUDED.final_marks,
                       teacher_feedback=EXCLUDED.teacher_feedback,
@@ -919,7 +917,7 @@ def download_attempt_result_pdf(attempt_id):
         canvas.rotate(35)
         canvas.setFillColor(colors.HexColor("#64748b"))
         if hasattr(canvas, "setFillAlpha"):
-            canvas.setFillAlpha(0.13)
+            canvas.setFillAlpha(0.22)
         watermark = "Abhishek Santra English Guidance"
         canvas.setFont("Helvetica-Bold", 30)
         canvas.drawCentredString(0, 0, watermark)
@@ -994,7 +992,7 @@ def download_attempt_result_pdf(attempt_id):
         parts.append(Paragraph(f'<b>Marks awarded:</b> {float(awarded):g} / {float(q["maximum_marks"]):g}', small_style))
         story.append(KeepTogether(parts))
         story.append(Spacer(1, 10))
-    doc.build(story, onFirstPage=add_pdf_branding, onLaterPages=add_pdf_branding)
+    doc.build(story, onPageEnd=add_pdf_branding)
     buffer.seek(0)
     safe_name = "".join(ch for ch in str(result["student_name"]) if ch.isalnum() or ch in (" ", "-", "_")).strip().replace(" ", "_") or "student"
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=f"{safe_name}_exam_result.pdf")
