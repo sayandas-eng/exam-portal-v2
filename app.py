@@ -110,7 +110,7 @@ if DATABASE_URL:
 
 
 def valid_admin_session_token():
-    token = request.headers.get("X-Admin-Session", "")
+    token = request.headers.get("X-Admin-Session", "") or request.cookies.get("exam_portal_admin_token", "")
     if not token or not app.secret_key:
         return False
     try:
@@ -163,7 +163,9 @@ def admin_session_login():
     session["admin_csrf_token"] = secrets.token_urlsafe(32)
     session.permanent = True
     admin_token = URLSafeTimedSerializer(app.secret_key, salt="exam-portal-admin-session").dumps({"role": "admin"})
-    return jsonify({"ok": True, "csrf_token": session["admin_csrf_token"], "admin_token": admin_token})
+    response = jsonify({"ok": True, "csrf_token": session["admin_csrf_token"], "admin_token": admin_token})
+    response.set_cookie("exam_portal_admin_token", admin_token, max_age=7 * 24 * 60 * 60, httponly=True, secure=True, samesite="Lax", path="/")
+    return response
 
 
 @app.get("/api/admin/session")
@@ -181,7 +183,9 @@ def admin_session_status():
 @app.post("/api/admin/session/logout")
 def admin_session_logout():
     session.clear()
-    return jsonify({"ok": True})
+    response = jsonify({"ok": True})
+    response.delete_cookie("exam_portal_admin_token", path="/", secure=True, httponly=True, samesite="Lax")
+    return response
 
 
 
