@@ -211,7 +211,7 @@ def student_login():
         cur.execute("""
             SELECT e.id FROM portal_v2_exams e
             WHERE e.status='live' AND e.available_from <= now()
-              AND now() < (e.available_until - interval '1 day')
+              AND now() < (CASE WHEN e.available_until - e.available_from > interval '1 day' THEN e.available_until - interval '1 day' ELSE e.available_until END)
               AND (e.target_class IS NULL OR lower(trim(e.target_class)) = lower(%s))
             ORDER BY e.published_at DESC NULLS LAST LIMIT 1
         """, (student_class,))
@@ -224,7 +224,7 @@ def student_login():
             FROM portal_v2_exams e
             WHERE e.status='live'
               AND e.available_from <= now()
-              AND now() < (e.available_until - interval '1 day')
+              AND now() < (CASE WHEN e.available_until - e.available_from > interval '1 day' THEN e.available_until - interval '1 day' ELSE e.available_until END)
               AND (e.target_class IS NULL OR lower(trim(e.target_class)) = lower(%s))
               AND NOT EXISTS (
                 SELECT 1 FROM portal_v2_attempts a
@@ -600,7 +600,7 @@ def save_answer(attempt_id, question_id):
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT a.status, a.review_deadline, q.id, e.available_from,
-                   (e.available_until - interval '1 day') AS student_until, e.status AS exam_status
+                   (CASE WHEN e.available_until - e.available_from > interval '1 day' THEN e.available_until - interval '1 day' ELSE e.available_until END) AS student_until, e.status AS exam_status
             FROM portal_v2_attempts a
             JOIN portal_v2_questions q ON q.exam_id=a.exam_id
             JOIN portal_v2_exams e ON e.id=a.exam_id
@@ -684,7 +684,7 @@ def submit_attempt(attempt_id):
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT a.status, a.review_deadline, e.available_from,
-                   (e.available_until - interval '1 day') AS student_until, e.status AS exam_status
+                   (CASE WHEN e.available_until - e.available_from > interval '1 day' THEN e.available_until - interval '1 day' ELSE e.available_until END) AS student_until, e.status AS exam_status
             FROM portal_v2_attempts a JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE a.id=%s AND a.student_name=%s AND a.student_class=%s FOR UPDATE OF a
         """, (attempt_id, session["student_name"], session["student_class"]))
