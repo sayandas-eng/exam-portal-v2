@@ -78,12 +78,16 @@ def purge_expired_exams():
               AND available_until IS NOT NULL AND available_until <= now()
             FOR UPDATE
         """)
-        expired_ids = [row["id"] for row in cur.fetchall()]
-        if expired_ids:
-            cur.execute("DELETE FROM portal_v2_evaluations WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id = ANY(%s))", (expired_ids,))
-            cur.execute("DELETE FROM portal_v2_answers WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id = ANY(%s))", (expired_ids,))
-            cur.execute("DELETE FROM portal_v2_attempts WHERE exam_id = ANY(%s)", (expired_ids,))
-            cur.execute("UPDATE portal_v2_exams SET status='archived' WHERE id = ANY(%s)", (expired_ids,))
+        cur.fetchall()
+        expired_exam_filter = """
+            SELECT id FROM portal_v2_exams
+            WHERE status IN ('live', 'deleted')
+              AND available_until IS NOT NULL AND available_until <= now()
+        """
+        cur.execute(f"DELETE FROM portal_v2_evaluations WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id IN ({expired_exam_filter}))")
+        cur.execute(f"DELETE FROM portal_v2_answers WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id IN ({expired_exam_filter}))")
+        cur.execute(f"DELETE FROM portal_v2_attempts WHERE exam_id IN ({expired_exam_filter})")
+        cur.execute(f"UPDATE portal_v2_exams SET status='archived' WHERE id IN ({expired_exam_filter})")
 
 
 def _expiry_cleanup_loop():
