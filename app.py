@@ -390,8 +390,8 @@ def create_exam():
                   duration, review, total, availability_days, availability_start, availability_end))
             for index, q in enumerate(questions, start=1):
                 qtype = q.get("question_type", "mcq")
-                if qtype not in ("mcq", "saq", "laq"):
-                    raise ValueError("question_type must be mcq, saq, or laq")
+                if qtype not in ("mcq", "saq"):
+                    raise ValueError("Only MCQ and SAQ questions are supported. LAQs are not allowed.")
                 cur.execute("""
                     INSERT INTO portal_v2_questions
                     (exam_id, position, question_type, prompt, options,
