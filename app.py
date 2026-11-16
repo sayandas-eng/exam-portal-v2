@@ -865,6 +865,9 @@ def admin_list_attempts():
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
+            WHERE e.status='live'
+              AND e.available_from IS NOT NULL AND e.available_from <= now()
+              AND e.available_until IS NOT NULL AND now() < e.available_until
             GROUP BY a.id, e.id
             ORDER BY a.submitted_at DESC NULLS LAST, a.started_at DESC
         """)
@@ -880,7 +883,9 @@ def admin_attempt_detail(attempt_id):
                    e.subject, e.total_marks
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
-            WHERE a.id=%s
+            WHERE a.id=%s AND e.status='live'
+              AND e.available_from IS NOT NULL AND e.available_from <= now()
+              AND e.available_until IS NOT NULL AND now() < e.available_until
         """, (attempt_id,))
         attempt = cur.fetchone()
         if not attempt:
@@ -914,7 +919,14 @@ def evaluate_attempt(attempt_id):
         return error("Evaluations must be provided as a list")
     try:
         with db() as conn, conn.cursor() as cur:
-            cur.execute("SELECT status FROM portal_v2_attempts WHERE id=%s FOR UPDATE", (attempt_id,))
+            cur.execute("""
+                SELECT a.status FROM portal_v2_attempts a
+                JOIN portal_v2_exams e ON e.id=a.exam_id
+                WHERE a.id=%s AND e.status='live'
+                  AND e.available_from IS NOT NULL AND e.available_from <= now()
+                  AND e.available_until IS NOT NULL AND now() < e.available_until
+                FOR UPDATE OF a
+            """, (attempt_id,))
             attempt = cur.fetchone()
             if not attempt:
                 return error("Attempt not found", 404)
@@ -968,7 +980,9 @@ def download_attempt_result_pdf(attempt_id):
                    a.submitted_at, e.title AS exam_title, e.total_marks
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
-            WHERE a.id=%s
+            WHERE a.id=%s AND e.status='live'
+              AND e.available_from IS NOT NULL AND e.available_from <= now()
+              AND e.available_until IS NOT NULL AND now() < e.available_until
         """, (attempt_id,))
         result = cur.fetchone()
         if not result:
@@ -1109,6 +1123,9 @@ def download_all_student_rankings_pdf():
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
             WHERE a.status='evaluated'
+              AND e.status='live'
+              AND e.available_from IS NOT NULL AND e.available_from <= now()
+              AND e.available_until IS NOT NULL AND now() < e.available_until
             GROUP BY e.id, a.id
             ORDER BY e.title, obtained_marks DESC, a.submitted_at ASC, a.student_name ASC
         """)
