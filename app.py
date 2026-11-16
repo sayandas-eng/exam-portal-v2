@@ -303,7 +303,7 @@ def public_exams():
                    duration_minutes, review_minutes, total_marks, published_at,
                    available_from, available_until, true AS has_password
             FROM portal_v2_exams
-            WHERE status = 'live' AND available_from <= now() AND now() < (CASE WHEN available_until - available_from > interval '1 day' THEN available_until - interval '1 day' ELSE available_until END)
+            WHERE status = 'live' AND available_from <= now() AND now() < available_until
               AND NOT EXISTS (
                 SELECT 1 FROM portal_v2_attempts a
                 WHERE a.exam_id=portal_v2_exams.id
@@ -513,9 +513,9 @@ def start_exam(exam_id):
             return error("You have already submitted this exam. Each student can take an exam only once.", 409)
         cur.execute("""
             SELECT id, target_class, exam_password_hash, duration_minutes, review_minutes, available_from,
-                   available_until, (CASE WHEN available_until - available_from > interval '1 day' THEN available_until - interval '1 day' ELSE available_until END) AS student_until
+                   available_until, available_until AS student_until
             FROM portal_v2_exams WHERE id=%s AND status='live' AND available_from <= now()
-              AND now() < (CASE WHEN available_until - available_from > interval '1 day' THEN available_until - interval '1 day' ELSE available_until END)
+              AND now() < available_until
         """, (exam_id,))
         exam = cur.fetchone()
         if not exam:
@@ -597,7 +597,7 @@ def save_answer(attempt_id, question_id):
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT a.status, a.review_deadline, q.id, e.available_from,
-                   (CASE WHEN e.available_until - e.available_from > interval '1 day' THEN e.available_until - interval '1 day' ELSE e.available_until END) AS student_until, e.status AS exam_status
+                   e.available_until AS student_until, e.status AS exam_status
             FROM portal_v2_attempts a
             JOIN portal_v2_questions q ON q.exam_id=a.exam_id
             JOIN portal_v2_exams e ON e.id=a.exam_id
@@ -681,7 +681,7 @@ def submit_attempt(attempt_id):
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT a.status, a.review_deadline, e.available_from,
-                   (CASE WHEN e.available_until - e.available_from > interval '1 day' THEN e.available_until - interval '1 day' ELSE e.available_until END) AS student_until, e.status AS exam_status
+                   e.available_until AS student_until, e.status AS exam_status
             FROM portal_v2_attempts a JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE a.id=%s AND a.student_name=%s AND a.student_class=%s FOR UPDATE OF a
         """, (attempt_id, session["student_name"], session["student_class"]))
