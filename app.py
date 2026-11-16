@@ -206,36 +206,12 @@ def student_login():
         return error("Enter your student name, class and examination password")
     if not STUDENT_EXAM_PASSWORD or not hmac.compare_digest(password, STUDENT_EXAM_PASSWORD):
         return error("Incorrect examination password", 401)
-    with db() as conn, conn.cursor() as cur:
-        # Reserve the final day for teacher review only on multi-day exam windows; short scheduled sessions use their full window.
-        cur.execute("""
-            SELECT e.id FROM portal_v2_exams e
-            WHERE e.status='live' AND e.available_from <= now()
-              AND now() < (CASE WHEN e.available_until - e.available_from > interval '1 day' THEN e.available_until - interval '1 day' ELSE e.available_until END)
-            ORDER BY e.published_at DESC NULLS LAST LIMIT 1
-        """)
-        active_exam = cur.fetchone()
-        if not active_exam:
-            return error("No examination is currently open for students in your class. The exam may be in its teacher-review period or may have ended.", 403)
-
-        cur.execute("""
-            SELECT e.id
-            FROM portal_v2_exams e
-            WHERE e.status='live'
-              AND e.available_from <= now()
-              AND now() < (CASE WHEN e.available_until - e.available_from > interval '1 day' THEN e.available_until - interval '1 day' ELSE e.available_until END)
-              AND NOT EXISTS (
-                SELECT 1 FROM portal_v2_attempts a
-                WHERE a.exam_id=e.id AND a.student_name=%s AND a.student_class=%s
-              )
-            ORDER BY e.published_at DESC NULLS LAST
-            LIMIT 1
-        """, (name, student_class))
-        matched_exam = cur.fetchone()
+    # Authentication is independent of exam scheduling. Students can always sign in;
+    # the exam list and start endpoint enforce each exam's live availability window.
     session.clear()
     session["student_name"] = name
     session["student_class"] = student_class
-    session["authorized_exam_id"] = str(matched_exam["id"]) if matched_exam else None
+    session["authorized_exam_id"] = None
     session["csrf_token"] = secrets.token_urlsafe(32)
     session.permanent = True
     return jsonify({
