@@ -35,3 +35,5 @@ button,a,input,textarea{touch-action:manipulation}
 .download{display:inline-block;margin:4px 0 4px 6px;padding:8px 10px;border-radius:7px;background:#eef2ff;color:#5148d9;text-decoration:none;font-size:11px;font-weight:700;white-space:nowrap}.download:hover{background:#e3e5ff}
 
 .head-actions{display:flex;align-items:center;gap:9px}.ranking-download{display:inline-block;text-decoration:none;color:#5148d9;font-size:12px;font-weight:700;white-space:nowrap}.ranking-download:hover{background:#f2f1ff}@media(max-width:650px){.head-actions{width:100%;flex-direction:column}.head-actions>*{width:100%;text-align:center;min-height:42px;display:flex;align-items:center;justify-content:center}}
+
+.teacher-back-links{display:flex;gap:14px;align-items:center;margin-left:auto;margin-right:18px}.teacher-back-links a{color:#5148d9;text-decoration:none;font-size:12px;font-weight:700;white-space:nowrap}.teacher-back-links a:hover{text-decoration:underline}@media(max-width:650px){.teacher-back-links{width:100%;margin:0;justify-content:flex-start;flex-wrap:wrap}}
