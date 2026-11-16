@@ -722,9 +722,24 @@ def submit_attempt(attempt_id):
                     except Exception:
                         scheme = {}
                 auto_marks, feedback = _auto_mark_saq(q["answer_text"], q["expected_answer"], scheme, q["marks"])
+            elif q["question_type"] == "laq":
+                # Long answers also receive a numeric automatic mark from the configured
+                # rubric/reference answer. If no key exists, record zero with an explicit
+                # note rather than leaving the result pending.
+                scheme = q["marking_scheme"] or {}
+                if isinstance(scheme, str):
+                    try:
+                        scheme = __import__("json").loads(scheme)
+                    except Exception:
+                        scheme = {}
+                auto_marks, feedback = _auto_mark_saq(
+                    q["answer_text"], q["expected_answer"], scheme, q["marks"]
+                )
+                if not q["expected_answer"] and not scheme:
+                    feedback = "Automatically evaluated: no answer key or marking criteria were configured; zero awarded. Teacher may review."
             else:
-                auto_marks = None
-                feedback = "Awaiting teacher review."
+                auto_marks = 0.0
+                feedback = "Automatically evaluated: unsupported question type; zero awarded. Teacher may review."
             cur.execute("""
                 INSERT INTO portal_v2_evaluations
                 (attempt_id, question_id, ai_marks, final_marks, ai_feedback,
