@@ -669,9 +669,9 @@ def _auto_mark_saq(answer, expected_answer, marking_scheme, maximum_marks):
     expected = _normalize_marking_text(expected_answer)
     if expected:
         if normalized == expected:
-            return float(maximum_marks), "Automatically marked: the answer matches the expected answer."
-        return None, "Needs teacher review: the answer differs from the reference wording; check meaning before awarding marks."
-    return None, "Needs teacher review: no answer key or marking criteria were supplied."
+            return float(maximum_marks), "Automatically marked: the answer matches the supplied answer key."
+        return 0.0, "Automatically marked: the answer does not match the supplied answer key."
+    return 0.0, "Automatically marked: no answer key or marking criteria were configured; zero awarded."
 
 
 @app.post("/api/attempts/<attempt_id>/submit")
@@ -772,9 +772,48 @@ def teacher_portal():
     return render_template("teacher.html")
 
 
+def _auto_evaluate_pending_attempts(cur):
+    """Backfill automatic marks for submitted attempts created before auto-grading completed."""
+    cur.execute("SELECT id FROM portal_v2_attempts WHERE status='submitted' ORDER BY submitted_at")
+    pending = [row["id"] for row in cur.fetchall()]
+    for attempt_id in pending:
+        cur.execute("""
+            SELECT q.id AS question_id, q.question_type, q.correct_option,
+                   q.expected_answer, q.marking_scheme, q.marks,
+                   ans.selected_option, ans.answer_text
+            FROM portal_v2_questions q
+            JOIN portal_v2_attempts a ON a.exam_id=q.exam_id
+            LEFT JOIN portal_v2_answers ans ON ans.question_id=q.id AND ans.attempt_id=a.id
+            WHERE a.id=%s ORDER BY q.position
+        """, (attempt_id,))
+        for q in cur.fetchall():
+            if q["question_type"] == "mcq":
+                marks = float(q["marks"]) if q["selected_option"] and str(q["selected_option"]).strip().upper() == str(q["correct_option"] or "").strip().upper() else 0.0
+                feedback = "Automatically marked using the MCQ answer key."
+            elif q["question_type"] == "saq":
+                scheme = q["marking_scheme"] or {}
+                if isinstance(scheme, str):
+                    try:
+                        scheme = __import__("json").loads(scheme)
+                    except Exception:
+                        scheme = {}
+                marks, feedback = _auto_mark_saq(q["answer_text"], q["expected_answer"], scheme, q["marks"])
+            else:
+                marks, feedback = 0.0, "Automatically marked: no supported answer key for this question type."
+            cur.execute("""
+                INSERT INTO portal_v2_evaluations
+                (attempt_id, question_id, ai_marks, final_marks, ai_feedback,
+                 reviewed_by, reviewed_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, 'AutoMark', now(), now())
+                ON CONFLICT (attempt_id, question_id) DO NOTHING
+            """, (attempt_id, q["question_id"], marks, marks, feedback))
+        cur.execute("UPDATE portal_v2_attempts SET status='evaluated', evaluated_at=COALESCE(evaluated_at, now()) WHERE id=%s", (attempt_id,))
+
+
 @app.get("/api/admin/attempts")
 def admin_list_attempts():
     with db() as conn, conn.cursor() as cur:
+        _auto_evaluate_pending_attempts(cur)
         cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
                    a.started_at, a.submitted_at, e.id AS exam_id,
@@ -824,8 +863,8 @@ def admin_attempt_detail(attempt_id):
 @app.post("/api/admin/attempts/<attempt_id>/evaluate")
 @limiter.limit("60 per minute")
 def evaluate_attempt(attempt_id):
-    if not admin_required():
-        return error("Admin authentication required", 401)
+    # Teacher review workspace is intentionally accessible without a separate sign-in.
+    # Keep strict validation and rate limiting on this write endpoint.
     data = request.get_json(silent=True) or {}
     evaluations = data.get("evaluations")
     reviewer = str(data.get("reviewer", "Teacher")).strip()[:120] or "Teacher"
@@ -920,6 +959,8 @@ def download_attempt_result_pdf(attempt_id):
         marks = cur.fetchone()
 
     from xml.sax.saxutils import escape
+    import unicodedata
+    pdf_text = lambda value: unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.enums import TA_CENTER
@@ -962,10 +1003,10 @@ def download_attempt_result_pdf(attempt_id):
     small_style = ParagraphStyle("OptionText", parent=styles["Normal"], fontSize=9, leading=12, leftIndent=10)
     story = [
         Paragraph("EXAMINATION RESULT", title_style),
-        Paragraph(escape(str(result["exam_title"])), ParagraphStyle("ExamName", parent=meta_style, alignment=TA_CENTER, fontSize=11, spaceAfter=14)),
+        Paragraph(escape(pdf_text(result["exam_title"])), ParagraphStyle("ExamName", parent=meta_style, alignment=TA_CENTER, fontSize=11, spaceAfter=14)),
     ]
     summary = [
-        ["Student", str(result["student_name"]), "Class", str(result["student_class"])],
+        ["Student", pdf_text(result["student_name"]), "Class", pdf_text(result["student_class"])],
         ["Marks obtained", f'{float(marks["obtained_marks"]):g}', "Total marks", f'{float(marks["total_marks"]):g}'],
         ["Submitted", submitted_text, "", ""],
     ]
@@ -986,7 +1027,7 @@ def download_attempt_result_pdf(attempt_id):
     ]))
     story += [summary_table, Spacer(1, 18), Paragraph("QUESTIONS AND STUDENT RESPONSES", styles["Heading2"]), Spacer(1, 6)]
     for idx, q in enumerate(question_rows, 1):
-        parts = [Paragraph(f'<b>Q{idx}. {escape(str(q["prompt"] or ""))}</b> <font color="#64748b">({float(q["maximum_marks"]):g} marks)</font>', q_style)]
+        parts = [Paragraph(f'<b>Q{idx}. {escape(pdf_text(q["prompt"]))}</b> <font color="#64748b">({float(q["maximum_marks"]):g} marks)</font>', q_style)]
         opts = q["options"] or []
         if isinstance(opts, dict):
             opt_items = list(opts.items())
@@ -996,15 +1037,15 @@ def download_attempt_result_pdf(attempt_id):
             opt_items = []
         for key, value in opt_items:
             selected = str(q["selected_option"] or "").strip().upper() == str(key).strip().upper()
-            prefix = "☑" if selected else "☐"
-            parts.append(Paragraph(f'{prefix} {escape(str(key))}. {escape(str(value))}' + ("  <b>(Selected)</b>" if selected else ""), small_style))
+            prefix = "[x]" if selected else "[ ]"
+            parts.append(Paragraph(f'{prefix} {escape(pdf_text(key))}. {escape(pdf_text(value))}' + ("  <b>(Selected)</b>" if selected else ""), small_style))
         if q["question_type"] == "mcq":
             if not opt_items:
                 parts.append(Paragraph("Options: not available", small_style))
             if not q["selected_option"]:
                 parts.append(Paragraph("<b>Selected option:</b> Not answered", small_style))
         else:
-            parts.append(Paragraph("<b>Student answer:</b> " + escape(str(q["answer_text"] or "Not answered")), small_style))
+            parts.append(Paragraph("<b>Student answer:</b> " + escape(pdf_text(q["answer_text"] or "Not answered")), small_style))
         awarded = q["final_marks"] if q["final_marks"] is not None else (q["ai_marks"] or 0)
         parts.append(Paragraph(f'<b>Marks awarded:</b> {float(awarded):g} / {float(q["maximum_marks"]):g}', small_style))
         story.append(KeepTogether(parts))
@@ -1053,12 +1094,14 @@ def download_all_student_rankings_pdf():
         canvas.drawRightString(page_width - 30, 18, "Checked By Abhishek Santra")
         canvas.restoreState()
     from xml.sax.saxutils import escape
+    import unicodedata
+    pdf_text = lambda value: unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=30, leftMargin=30, topMargin=35, bottomMargin=35)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle("RankingTitle", parent=styles["Title"], alignment=TA_CENTER, textColor=colors.HexColor("#172554"), fontSize=18, spaceAfter=5)
     sub_style = ParagraphStyle("RankingSub", parent=styles["Normal"], alignment=TA_CENTER, textColor=colors.HexColor("#64748b"), fontSize=9, spaceAfter=16)
-    story = [Paragraph("STUDENT RANKING LIST", title_style), Paragraph("All evaluated examinations · Ranked by marks obtained", sub_style)]
+    story = [Paragraph("STUDENT RANKING LIST", title_style), Paragraph("All evaluated examinations - Ranked by marks obtained", sub_style)]
     grouped = {}
     for row in records:
         grouped.setdefault(str(row["exam_id"]), []).append(row)
@@ -1074,7 +1117,7 @@ def download_all_student_rankings_pdf():
                 if display_exam_title.endswith(suffix):
                     display_exam_title = display_exam_title[:-len(suffix)].rstrip()
                     break
-        story.append(Paragraph(escape(display_exam_title), styles["Heading2"]))
+        story.append(Paragraph(escape(pdf_text(display_exam_title)), styles["Heading2"]))
         table_rows = [["Rank", "Student name", "Class", "Marks obtained", "Total marks", "Submitted (IST)"]]
         previous_marks = None
         rank = 0
@@ -1089,8 +1132,8 @@ def download_all_student_rankings_pdf():
                     submitted = submitted.replace(tzinfo=timezone.utc)
                 date_text = submitted.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y %I:%M %p")
             else:
-                date_text = "—"
-            table_rows.append([str(rank), str(row["student_name"]), str(row["student_class"]), f"{value:g}", f'{float(row["total_marks"]):g}', date_text])
+                date_text = "-"
+            table_rows.append([str(rank), pdf_text(row["student_name"]), pdf_text(row["student_class"]), f"{value:g}", f'{float(row["total_marks"]):g}', pdf_text(date_text)])
         table = Table(table_rows, repeatRows=1, colWidths=[42, 180, 65, 85, 75, 125])
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef2ff")),
