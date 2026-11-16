@@ -782,6 +782,14 @@ def _auto_evaluate_pending_attempts(cur):
                WHERE ev.attempt_id=a.id AND ev.final_marks IS NULL
                  AND ev.reviewed_by='AutoMark'
            )
+           OR EXISTS (
+               SELECT 1 FROM portal_v2_questions q
+               WHERE q.exam_id=a.exam_id
+                 AND NOT EXISTS (
+                     SELECT 1 FROM portal_v2_evaluations ev
+                     WHERE ev.attempt_id=a.id AND ev.question_id=q.id
+                 )
+           )
         ORDER BY a.submitted_at
     """)
     pending = [row["id"] for row in cur.fetchall()]
