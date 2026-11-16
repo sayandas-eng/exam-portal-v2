@@ -12,7 +12,7 @@
   async function api(path, options={}) {
     const headers = {"Content-Type":"application/json", ...(options.headers||{})};
     if (adminConnected && adminCsrf) headers["X-Admin-CSRF"] = adminCsrf;
-    const response = await fetch(path, {...options, headers});
+    const response = await fetch(path, {...options, headers, credentials:"same-origin", cache:"no-store"});
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "Something went wrong. Please try again.");
     return payload;
@@ -67,7 +67,7 @@
     const button=$("#admin-login-button"), error=$("#admin-lock-error");
     button.disabled=true; button.textContent="Verifying…"; error.textContent="";
     try {
-      const response=await fetch("/api/admin/session/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:$("#admin-username").value.trim(),password:$("#admin-password").value})});
+      const response=await fetch("/api/admin/session/login",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",cache:"no-store",body:JSON.stringify({username:$("#admin-username").value.trim(),password:$("#admin-password").value})});
       const data=await response.json(); if(!response.ok) throw new Error(data.error||"Login failed");
       adminConnected=true; adminCsrf=data.csrf_token||"";
       $("#admin-password").value=""; $("#admin-lock").hidden=true;
@@ -87,7 +87,7 @@
   });
   async function initAdmin() {
     try {
-      const r=await fetch("/api/admin/session"), d=await r.json();
+      const r=await fetch("/api/admin/session",{credentials:"same-origin",cache:"no-store"}), d=await r.json();
       adminConnected=!!d.ok; adminCsrf=d.csrf_token||"";
       if(adminConnected) {
         $("#admin-lock").hidden=true; $("#admin-session-label").textContent="Secure session active";
