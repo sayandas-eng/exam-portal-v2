@@ -84,9 +84,8 @@ def purge_expired_exams():
             WHERE status IN ('live', 'deleted')
               AND available_until IS NOT NULL AND available_until <= now()
         """
-        cur.execute(f"DELETE FROM portal_v2_evaluations WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id IN ({expired_exam_filter}))")
-        cur.execute(f"DELETE FROM portal_v2_answers WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id IN ({expired_exam_filter}))")
-        cur.execute(f"DELETE FROM portal_v2_attempts WHERE exam_id IN ({expired_exam_filter})")
+        # Archive expired exams without deleting attempts, answers, or evaluation records.
+        # Teachers must retain access to every submission and be able to correct marks later.
         cur.execute(f"UPDATE portal_v2_exams SET status='archived' WHERE id IN ({expired_exam_filter})")
 
 
@@ -762,7 +761,7 @@ def admin_list_attempts():
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
-            WHERE e.status='live' AND e.available_until > now()
+            WHERE e.status IN ('live','archived','deleted')
             GROUP BY a.id, e.id
             ORDER BY a.submitted_at DESC NULLS LAST, a.started_at DESC
         """)
@@ -1010,7 +1009,7 @@ def download_all_student_rankings_pdf():
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
-            WHERE a.status='evaluated' AND e.status='live' AND e.available_until > now()
+            WHERE a.status='evaluated' AND e.status IN ('live','archived','deleted')
             GROUP BY e.id, a.id
             ORDER BY e.title, obtained_marks DESC, a.submitted_at ASC, a.student_name ASC
         """)
