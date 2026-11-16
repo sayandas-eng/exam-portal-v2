@@ -915,9 +915,9 @@ def download_attempt_result_pdf(attempt_id):
         canvas.saveState()
         canvas.translate(page_width / 2, page_height / 2)
         canvas.rotate(35)
-        canvas.setFillColor(colors.HexColor("#64748b"))
+        canvas.setFillColor(colors.HexColor("#94a3b8"))
         if hasattr(canvas, "setFillAlpha"):
-            canvas.setFillAlpha(0.22)
+            canvas.setFillAlpha(0.5)
         watermark = "Abhishek Santra English Guidance"
         canvas.setFont("Helvetica-Bold", 30)
         canvas.drawCentredString(0, 0, watermark)
