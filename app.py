@@ -1136,17 +1136,25 @@ def download_all_student_rankings_pdf():
     from reportlab.lib.enums import TA_CENTER
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 
+    from reportlab.pdfgen import canvas as pdf_canvas
+
+    class RankingWatermarkCanvas(pdf_canvas.Canvas):
+        def showPage(self):
+            # Draw after page content so the watermark overlays headings and table cells.
+            page_width, page_height = landscape(A4)
+            self.saveState()
+            self.translate(page_width / 2, page_height / 2)
+            self.rotate(35)
+            self.setFillColor(colors.HexColor("#64748b"))
+            if hasattr(self, "setFillAlpha"):
+                self.setFillAlpha(0.13)
+            self.setFont("Helvetica-Bold", 34)
+            self.drawCentredString(0, 0, "Abhishek Santra English Guidance")
+            self.restoreState()
+            super().showPage()
+
     def add_pdf_branding(canvas, doc):
-        page_width, page_height = landscape(A4)
-        canvas.saveState()
-        canvas.translate(page_width / 2, page_height / 2)
-        canvas.rotate(35)
-        canvas.setFillColor(colors.HexColor("#64748b"))
-        if hasattr(canvas, "setFillAlpha"):
-            canvas.setFillAlpha(0.13)
-        canvas.setFont("Helvetica-Bold", 34)
-        canvas.drawCentredString(0, 0, "Abhishek Santra English Guidance")
-        canvas.restoreState()
+        page_width, _ = landscape(A4)
         canvas.saveState()
         canvas.setFillColor(colors.HexColor("#475569"))
         canvas.setFont("Helvetica-Bold", 8)
@@ -1208,7 +1216,7 @@ def download_all_student_rankings_pdf():
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ]))
         story.extend([table, Spacer(1, 18)])
-    doc.build(story, onFirstPage=add_pdf_branding, onLaterPages=add_pdf_branding)
+    doc.build(story, onFirstPage=add_pdf_branding, onLaterPages=add_pdf_branding, canvasmaker=RankingWatermarkCanvas)
     buffer.seek(0)
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name="student_rankings.pdf")
 
