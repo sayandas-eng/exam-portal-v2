@@ -1185,14 +1185,10 @@ def download_all_student_rankings_pdf():
                     display_exam_title = display_exam_title[:-len(suffix)].rstrip()
                     break
         story.append(Paragraph(escape(pdf_text(display_exam_title)), styles["Heading2"]))
-        table_rows = [["Rank", "Student name", "Class", "Marks obtained", "Total marks", "Submitted (IST)"]]
-        previous_marks = None
-        rank = 0
+        table_rows = [["Sl No", "Student name", "Class", "Marks obtained", "Total marks", "Submitted (IST)"]]
         for index, row in enumerate(rows, 1):
             value = float(row["obtained_marks"] or 0)
-            if previous_marks is None or value < previous_marks:
-                rank = index
-            previous_marks = value
+            rank = index
             submitted = row["submitted_at"]
             if submitted:
                 if submitted.tzinfo is None:
