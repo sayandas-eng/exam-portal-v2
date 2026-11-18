@@ -51,6 +51,14 @@ def db():
         raise RuntimeError("DATABASE_URL is not configured")
     conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
     if not SCHEMA_READY:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS portal_v2_pdf_access (
+                id SMALLINT PRIMARY KEY CHECK (id = 1),
+                enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+        conn.execute("INSERT INTO portal_v2_pdf_access (id, enabled) VALUES (1, TRUE) ON CONFLICT (id) DO NOTHING")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS availability_days INTEGER NOT NULL DEFAULT 3")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_until TIMESTAMPTZ")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_from TIMESTAMPTZ")
@@ -448,6 +456,7 @@ def publish_exam(exam_id):
         """, (starts_at, ends_at, exam_id))
         if not cur.fetchone():
             return error("Exam not found or cannot be published", 404)
+        cur.execute("UPDATE portal_v2_pdf_access SET enabled=TRUE, updated_at=now() WHERE id=1")
         cur.execute("""
             INSERT INTO portal_v2_audit_log (actor, action, entity_type, entity_id)
             VALUES ('admin', 'exam_published', 'exam', %s)
@@ -880,9 +889,7 @@ def admin_list_attempts():
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
-            WHERE e.status='live'
-              AND e.available_from IS NOT NULL AND e.available_from <= now()
-              AND e.available_until IS NOT NULL AND now() < e.available_until
+            WHERE a.status IN ('submitted', 'evaluated')
             GROUP BY a.id, e.id
             ORDER BY a.submitted_at DESC NULLS LAST, a.started_at DESC
         """)
@@ -898,9 +905,7 @@ def admin_attempt_detail(attempt_id):
                    e.subject, e.total_marks
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
-            WHERE a.id=%s AND e.status='live'
-              AND e.available_from IS NOT NULL AND e.available_from <= now()
-              AND e.available_until IS NOT NULL AND now() < e.available_until
+            WHERE a.id=%s
         """, (attempt_id,))
         attempt = cur.fetchone()
         if not attempt:
@@ -990,14 +995,15 @@ def evaluate_attempt(attempt_id):
 @app.get("/api/admin/attempts/<attempt_id>/result.pdf")
 def download_attempt_result_pdf(attempt_id):
     with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT enabled FROM portal_v2_pdf_access WHERE id=1")
+        if not cur.fetchone()["enabled"]:
+            return error("PDF downloads have been cleared by the teacher.", 410)
         cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
                    a.submitted_at, e.title AS exam_title, e.total_marks
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
-            WHERE a.id=%s AND e.status='live'
-              AND e.available_from IS NOT NULL AND e.available_from <= now()
-              AND e.available_until IS NOT NULL AND now() < e.available_until
+            WHERE a.id=%s
         """, (attempt_id,))
         result = cur.fetchone()
         if not result:
@@ -1127,9 +1133,31 @@ def download_attempt_result_pdf(attempt_id):
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=f"{safe_name}_exam_result.pdf")
 
 
+@app.get("/api/admin/pdfs/status")
+def admin_pdf_status():
+    if not admin_required():
+        return error("Admin authentication required", 401)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT enabled, updated_at FROM portal_v2_pdf_access WHERE id=1")
+        state = cur.fetchone()
+    return jsonify({"ok": True, "enabled": bool(state["enabled"]), "updated_at": state["updated_at"]})
+
+
+@app.post("/api/admin/pdfs/delete-all")
+def admin_delete_all_pdfs():
+    if not admin_required():
+        return error("Admin authentication required", 401)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE portal_v2_pdf_access SET enabled=FALSE, updated_at=now() WHERE id=1")
+    return jsonify({"ok": True, "enabled": False, "message": "PDF downloads have been cleared. Student records and marks are unchanged."})
+
+
 @app.get("/api/admin/rankings.pdf")
 def download_all_student_rankings_pdf():
     with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT enabled FROM portal_v2_pdf_access WHERE id=1")
+        if not cur.fetchone()["enabled"]:
+            return error("PDF downloads have been cleared by the teacher.", 410)
         cur.execute("""
             SELECT e.id AS exam_id, e.title AS exam_title, e.target_class,
                    e.total_marks, a.student_name, a.student_class, a.submitted_at,
@@ -1138,9 +1166,6 @@ def download_all_student_rankings_pdf():
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
             WHERE a.status='evaluated'
-              AND e.status='live'
-              AND e.available_from IS NOT NULL AND e.available_from <= now()
-              AND e.available_until IS NOT NULL AND now() < e.available_until
             GROUP BY e.id, a.id
             ORDER BY e.title, obtained_marks DESC, a.submitted_at ASC, a.student_name ASC
         """)
