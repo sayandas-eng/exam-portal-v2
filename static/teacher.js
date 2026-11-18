@@ -69,15 +69,15 @@ async function refreshPdfControls(){
  $("#download-result")?.classList.toggle("hidden",!enabled||current?.status!=="evaluated");
 }
 $("#delete-all-pdfs").addEventListener("click",async()=>{
- if(!confirm("Delete access to ALL individual result PDFs and ranking PDFs? Student submissions and marks will remain untouched."))return;
+ if(!confirm("PERMANENTLY DELETE ALL student submissions, saved answers, marks, and results from EVERY exam? Exam questions and settings will remain. This cannot be undone."))return;
  const button=$("#delete-all-pdfs");button.disabled=true;button.textContent="Deleting…";
  try{
   await api("/api/admin/pdfs/delete-all",{method:"POST"});
   await refreshPdfControls();
-  notice("All PDF downloads have been removed from the portal. Student records and marks are unchanged.");
+  notice("All student submissions, answers, marks, and results have been deleted from every exam.");
   await load();
  }catch(error){notice(error.message);}
- finally{button.disabled=false;button.textContent="Delete all PDFs";}
+ finally{button.disabled=false;button.textContent="Delete all results & submissions";}
 });
 async function init(){setConnected();try{
  const sessionResponse=await fetch("/api/admin/session",{credentials:"same-origin",cache:"no-store"});
