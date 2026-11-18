@@ -60,3 +60,5 @@ header{gap:24px}
 
 /* Keep the connected panel hidden when the shared admin session is not active. */
 #connected-panel.hidden{display:none!important}
+
+.danger-action{color:#b42318;border-color:#f1c7c3;background:#fffafa;font-weight:700}.danger-action:hover{background:#fff0ee}.danger-action:disabled{opacity:.6;cursor:wait}
