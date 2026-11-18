@@ -306,18 +306,21 @@ def public_exams():
                      SELECT 1 FROM portal_v2_attempts a
                      WHERE a.exam_id=e.id
                        AND lower(btrim(a.student_name)) = lower(btrim(%s))
+                       AND lower(btrim(a.student_class)) = lower(btrim(%s))
                        AND a.status <> 'in_progress'
                    ) AS already_submitted,
                    EXISTS (
                      SELECT 1 FROM portal_v2_attempts a
                      WHERE a.exam_id=e.id
                        AND lower(btrim(a.student_name)) = lower(btrim(%s))
+                       AND lower(btrim(a.student_class)) = lower(btrim(%s))
                        AND a.status = 'in_progress'
                    ) AS already_started
             FROM portal_v2_exams e
             WHERE e.status = 'live' AND e.available_from <= now() AND now() < e.available_until
             ORDER BY e.published_at DESC NULLS LAST
-        """, (session["student_name"], session["student_name"]))
+        """, (session["student_name"], session["student_class"],
+              session["student_name"], session["student_class"]))
         return jsonify({"ok": True, "exams": cur.fetchall()})
 
 
@@ -492,18 +495,20 @@ def start_exam(exam_id):
     data = request.get_json(silent=True) or {}
     with db() as conn, conn.cursor() as cur:
         name, student_class = session["student_name"], session["student_class"]
-        # One attempt per exam and case-insensitive student name, regardless of class.
-        # The exam_id scopes this rule, so a newly published exam allows a fresh attempt.
-        lock_key = f"{exam_id}:{name.strip().casefold()}"
+        # One attempt per exam and case-insensitive student name + class.
+        # A different class is treated as a separate student identity.
+        lock_key = f"{exam_id}:{name.strip().casefold()}:{student_class.strip().casefold()}"
         cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (lock_key,))
         cur.execute("""
             SELECT id, status, exam_deadline, review_deadline
             FROM portal_v2_attempts
-            WHERE exam_id=%s AND lower(btrim(student_name)) = lower(btrim(%s))
+            WHERE exam_id=%s
+              AND lower(btrim(student_name)) = lower(btrim(%s))
+              AND lower(btrim(student_class)) = lower(btrim(%s))
             ORDER BY started_at ASC
             LIMIT 1
             FOR UPDATE
-        """, (exam_id, name))
+        """, (exam_id, name, student_class))
         previous_attempt = cur.fetchone()
         if previous_attempt:
             if previous_attempt["status"] == "in_progress":
@@ -560,7 +565,9 @@ def resume_attempt(attempt_id):
                    e.id AS exam_id, e.title, e.subject, e.topic, e.available_from, e.available_until, e.status AS exam_status
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
-            WHERE a.id=%s AND lower(btrim(a.student_name)) = lower(btrim(%s))
+            WHERE a.id=%s
+              AND lower(btrim(a.student_name)) = lower(btrim(%s))
+              AND lower(btrim(a.student_class)) = lower(btrim(%s))
             FOR UPDATE OF a
         """, (attempt_id, session["student_name"], session["student_class"]))
         attempt = cur.fetchone()
@@ -784,6 +791,7 @@ def student_attempts():
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE lower(btrim(a.student_name)) = lower(btrim(%s))
+              AND lower(btrim(a.student_class)) = lower(btrim(%s))
             ORDER BY a.started_at DESC
         """, (session["student_name"], session["student_class"]))
         return jsonify({"ok": True, "attempts": cur.fetchall()})
