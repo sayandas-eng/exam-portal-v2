@@ -996,9 +996,6 @@ def evaluate_attempt(attempt_id):
 @app.get("/api/admin/attempts/<attempt_id>/result.pdf")
 def download_attempt_result_pdf(attempt_id):
     with db() as conn, conn.cursor() as cur:
-        cur.execute("SELECT enabled FROM portal_v2_pdf_access WHERE id=1")
-        if not cur.fetchone()["enabled"]:
-            return error("PDF downloads have been cleared by the teacher.", 410)
         cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
                    a.submitted_at, e.title AS exam_title, e.total_marks, e.pdf_enabled
@@ -1159,9 +1156,6 @@ def admin_delete_all_pdfs():
 @app.get("/api/admin/rankings.pdf")
 def download_all_student_rankings_pdf():
     with db() as conn, conn.cursor() as cur:
-        cur.execute("SELECT enabled FROM portal_v2_pdf_access WHERE id=1")
-        if not cur.fetchone()["enabled"]:
-            return error("PDF downloads have been cleared by the teacher.", 410)
         cur.execute("""
             SELECT e.id AS exam_id, e.title AS exam_title, e.target_class,
                    e.total_marks, a.student_name, a.student_class, a.submitted_at,
