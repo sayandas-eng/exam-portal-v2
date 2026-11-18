@@ -195,8 +195,8 @@ def student_required():
 
 def normalize_student_class(value):
     value = str(value).strip()
-    match = __import__("re").fullmatch(r"(?:class\s*)?(\d+)", value, flags=__import__("re").IGNORECASE)
-    return f"Class {match.group(1)}" if match else value
+    match = __import__("re").fullmatch(r"class\s*(1[0-2]|[1-9])", value, flags=__import__("re").IGNORECASE)
+    return f"Class {match.group(1)}" if match else ""
 
 
 @app.before_request
