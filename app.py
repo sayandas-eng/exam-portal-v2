@@ -51,14 +51,6 @@ def db():
         raise RuntimeError("DATABASE_URL is not configured")
     conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
     if not SCHEMA_READY:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS portal_v2_pdf_access (
-                id SMALLINT PRIMARY KEY CHECK (id = 1),
-                enabled BOOLEAN NOT NULL DEFAULT TRUE,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-        """)
-        conn.execute("INSERT INTO portal_v2_pdf_access (id, enabled) VALUES (1, TRUE) ON CONFLICT (id) DO NOTHING")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS pdf_enabled BOOLEAN NOT NULL DEFAULT TRUE")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS availability_days INTEGER NOT NULL DEFAULT 3")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_until TIMESTAMPTZ")
@@ -1135,8 +1127,6 @@ def download_attempt_result_pdf(attempt_id):
 
 @app.get("/api/admin/pdfs/status")
 def admin_pdf_status():
-    if not admin_required():
-        return error("Admin authentication required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("SELECT EXISTS(SELECT 1 FROM portal_v2_exams WHERE pdf_enabled=TRUE) AS enabled")
         state = cur.fetchone()
@@ -1149,7 +1139,6 @@ def admin_delete_all_pdfs():
         return error("Admin authentication required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("UPDATE portal_v2_exams SET pdf_enabled=FALSE WHERE pdf_enabled=TRUE")
-        cur.execute("UPDATE portal_v2_pdf_access SET enabled=FALSE, updated_at=now() WHERE id=1")
     return jsonify({"ok": True, "enabled": False, "message": "PDF downloads have been cleared. Student records and marks are unchanged."})
 
 
