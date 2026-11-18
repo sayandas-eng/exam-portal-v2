@@ -22,7 +22,7 @@ async function load(){
  const body=$("#rows");
  body.innerHTML='<tr><td colspan="7" class="empty">Loading student submissions…</td></tr>';
  try{
-  const data=await api("/api/admin/attempts");
+  const data=await api("/api/admin/attempts?refresh="+Date.now());
   const attempts=data.attempts||[];
   body.innerHTML=attempts.length?attempts.map(a=>'<tr><td><div class="student">'+esc(a.student_name)+'</div></td><td>'+esc(a.exam_title)+'</td><td>'+esc(a.student_class)+'</td><td>'+esc(a.submitted_at?new Date(a.submitted_at).toLocaleString():"Not submitted")+'</td><td><strong>'+Number(a.obtained_marks||0).toFixed(2).replace(/\.00$/,"")+' / '+Number(a.total_marks||0).toFixed(2).replace(/\.00$/,"")+'</strong></td><td>'+esc(a.status)+'</td><td>'+(["submitted","evaluated"].includes(a.status)?'<button class="open" data-open="'+esc(a.id)+'">Review →</button>':"—")+(a.status==="evaluated"&&a.pdf_available?' <a class="download" href="/api/admin/attempts/'+encodeURIComponent(a.id)+'/result.pdf">Download PDF</a>':"")+'</td></tr>').join(""):'<tr><td colspan="7" class="empty">No student submissions yet.</td></tr>';
  }catch(error){
@@ -72,9 +72,13 @@ $("#delete-all-pdfs").addEventListener("click",async()=>{
  if(!confirm("PERMANENTLY DELETE ALL student submissions, saved answers, marks, and results from EVERY exam? Exam questions and settings will remain. This cannot be undone."))return;
  const button=$("#delete-all-pdfs");button.disabled=true;button.textContent="Deleting…";
  try{
-  await api("/api/admin/pdfs/delete-all",{method:"POST"});
+  const result=await api("/api/admin/pdfs/delete-all",{method:"POST"});
+  // Clear the visible review list immediately after the server confirms deletion.
+  $("#rows").innerHTML='<tr><td colspan="7" class="empty">No student submissions yet.</td></tr>';
+  current=null;questions=[];
+  $("#review-panel")?.classList.add("hidden");
   await refreshPdfControls();
-  notice("All student submissions, answers, marks, and results have been deleted from every exam.");
+  notice(result.message||"All student submissions and results have been deleted.");
   await load();
  }catch(error){notice(error.message);}
  finally{button.disabled=false;button.textContent="Delete all results & submissions";}
