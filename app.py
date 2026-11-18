@@ -52,6 +52,7 @@ def db():
     conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
     if not SCHEMA_READY:
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS pdf_enabled BOOLEAN NOT NULL DEFAULT TRUE")
+        conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS pdf_cleared_at TIMESTAMPTZ")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS availability_days INTEGER NOT NULL DEFAULT 3")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_until TIMESTAMPTZ")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_from TIMESTAMPTZ")
@@ -885,7 +886,8 @@ def admin_list_attempts():
         cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
                    a.started_at, a.submitted_at, e.id AS exam_id,
-                   e.title AS exam_title, e.subject, e.total_marks, e.pdf_enabled,
+                   e.title AS exam_title, e.subject, e.total_marks,
+                   (e.pdf_enabled AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)) AS pdf_available,
                    COALESCE(SUM(ev.final_marks), 0)::float AS obtained_marks
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
@@ -1008,6 +1010,11 @@ def download_attempt_result_pdf(attempt_id):
             return error("Attempt not found", 404)
         if not result["pdf_enabled"]:
             return error("PDF downloads for this exam have been cleared by the teacher.", 410)
+        with db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT pdf_cleared_at FROM portal_v2_exams WHERE id=(SELECT exam_id FROM portal_v2_attempts WHERE id=%s)", (attempt_id,))
+            cleared = cur.fetchone()
+        if cleared and cleared["pdf_cleared_at"] and (not result["submitted_at"] or result["submitted_at"] <= cleared["pdf_cleared_at"]):
+            return error("This result PDF was cleared by the teacher.", 410)
         if result["status"] != "evaluated":
             return error("The result PDF is available after marks are finalised.", 409)
         cur.execute("""
@@ -1146,7 +1153,7 @@ def admin_delete_all_pdfs():
     if not admin_required():
         return error("Admin authentication required", 401)
     with db() as conn, conn.cursor() as cur:
-        cur.execute("UPDATE portal_v2_exams SET pdf_enabled=FALSE WHERE pdf_enabled=TRUE")
+        cur.execute("UPDATE portal_v2_exams SET pdf_enabled=FALSE, pdf_cleared_at=now() WHERE pdf_enabled=TRUE")
     return jsonify({"ok": True, "enabled": False, "message": "PDF downloads have been cleared. Student records and marks are unchanged."})
 
 
@@ -1161,6 +1168,7 @@ def download_all_student_rankings_pdf():
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
             WHERE a.status='evaluated' AND e.pdf_enabled=TRUE
+              AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)
             GROUP BY e.id, a.id
             ORDER BY e.title, obtained_marks DESC, a.submitted_at ASC, a.student_name ASC
         """)
