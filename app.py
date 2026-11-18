@@ -1166,9 +1166,19 @@ def admin_delete_all_pdfs():
             WHERE attempt_id IN (SELECT id FROM portal_v2_attempts)
         """)
         cur.execute("DELETE FROM portal_v2_attempts")
+        deleted_attempts = cur.rowcount
         # Keep all exams usable; new submissions will appear in the portal and PDFs.
         cur.execute("UPDATE portal_v2_exams SET pdf_enabled=TRUE, pdf_cleared_at=NULL")
-    return jsonify({"ok": True, "enabled": True, "message": "All student submissions, answers, and result records have been deleted across every exam. Exam questions and settings remain."})
+    response = jsonify({
+        "ok": True,
+        "enabled": True,
+        "deleted_attempts": deleted_attempts,
+        "message": "All student submissions, answers, marks, and results have been deleted across every exam."
+    })
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.get("/api/admin/rankings.pdf")
