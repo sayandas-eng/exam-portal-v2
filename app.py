@@ -59,6 +59,7 @@ def db():
             )
         """)
         conn.execute("INSERT INTO portal_v2_pdf_access (id, enabled) VALUES (1, TRUE) ON CONFLICT (id) DO NOTHING")
+        conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS pdf_enabled BOOLEAN NOT NULL DEFAULT TRUE")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS availability_days INTEGER NOT NULL DEFAULT 3")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_until TIMESTAMPTZ")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_from TIMESTAMPTZ")
@@ -456,7 +457,7 @@ def publish_exam(exam_id):
         """, (starts_at, ends_at, exam_id))
         if not cur.fetchone():
             return error("Exam not found or cannot be published", 404)
-        cur.execute("UPDATE portal_v2_pdf_access SET enabled=TRUE, updated_at=now() WHERE id=1")
+        cur.execute("UPDATE portal_v2_exams SET pdf_enabled=TRUE WHERE id=%s", (exam_id,))
         cur.execute("""
             INSERT INTO portal_v2_audit_log (actor, action, entity_type, entity_id)
             VALUES ('admin', 'exam_published', 'exam', %s)
@@ -884,7 +885,7 @@ def admin_list_attempts():
         cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
                    a.started_at, a.submitted_at, e.id AS exam_id,
-                   e.title AS exam_title, e.subject, e.total_marks,
+                   e.title AS exam_title, e.subject, e.total_marks, e.pdf_enabled,
                    COALESCE(SUM(ev.final_marks), 0)::float AS obtained_marks
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
@@ -1000,7 +1001,7 @@ def download_attempt_result_pdf(attempt_id):
             return error("PDF downloads have been cleared by the teacher.", 410)
         cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
-                   a.submitted_at, e.title AS exam_title, e.total_marks
+                   a.submitted_at, e.title AS exam_title, e.total_marks, e.pdf_enabled
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE a.id=%s
@@ -1008,6 +1009,8 @@ def download_attempt_result_pdf(attempt_id):
         result = cur.fetchone()
         if not result:
             return error("Attempt not found", 404)
+        if not result["pdf_enabled"]:
+            return error("PDF downloads for this exam have been cleared by the teacher.", 410)
         if result["status"] != "evaluated":
             return error("The result PDF is available after marks are finalised.", 409)
         cur.execute("""
@@ -1138,9 +1141,9 @@ def admin_pdf_status():
     if not admin_required():
         return error("Admin authentication required", 401)
     with db() as conn, conn.cursor() as cur:
-        cur.execute("SELECT enabled, updated_at FROM portal_v2_pdf_access WHERE id=1")
+        cur.execute("SELECT EXISTS(SELECT 1 FROM portal_v2_exams WHERE pdf_enabled=TRUE) AS enabled")
         state = cur.fetchone()
-    return jsonify({"ok": True, "enabled": bool(state["enabled"]), "updated_at": state["updated_at"]})
+    return jsonify({"ok": True, "enabled": bool(state["enabled"])})
 
 
 @app.post("/api/admin/pdfs/delete-all")
@@ -1148,6 +1151,7 @@ def admin_delete_all_pdfs():
     if not admin_required():
         return error("Admin authentication required", 401)
     with db() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE portal_v2_exams SET pdf_enabled=FALSE WHERE pdf_enabled=TRUE")
         cur.execute("UPDATE portal_v2_pdf_access SET enabled=FALSE, updated_at=now() WHERE id=1")
     return jsonify({"ok": True, "enabled": False, "message": "PDF downloads have been cleared. Student records and marks are unchanged."})
 
@@ -1165,7 +1169,7 @@ def download_all_student_rankings_pdf():
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
-            WHERE a.status='evaluated'
+            WHERE a.status='evaluated' AND e.pdf_enabled=TRUE
             GROUP BY e.id, a.id
             ORDER BY e.title, obtained_marks DESC, a.submitted_at ASC, a.student_name ASC
         """)
