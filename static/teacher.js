@@ -4,8 +4,11 @@ const $=s=>document.querySelector(s);
 let current=null, questions=[];
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 function notice(message){const n=$("#notice");if(n){n.textContent=message;n.classList.add("show");}}
+let adminCsrf="";
 async function api(url,options={}){
- const response=await fetch(url,{...options,credentials:"same-origin",cache:"no-store",headers:{"Content-Type":"application/json",...(options.headers||{})}});
+ const extraHeaders={...(options.headers||{})};
+ if(["POST","PUT","PATCH","DELETE"].includes(String(options.method||"GET").toUpperCase())&&adminCsrf)extraHeaders["X-Admin-CSRF"]=adminCsrf;
+ const response=await fetch(url,{...options,credentials:"same-origin",cache:"no-store",headers:{"Content-Type":"application/json",...extraHeaders}});
  const data=await response.json().catch(()=>({}));
  if(!response.ok)throw new Error(data.error||("Request failed ("+response.status+")"));
  return data;
@@ -76,6 +79,11 @@ $("#delete-all-pdfs").addEventListener("click",async()=>{
  }catch(error){notice(error.message);}
  finally{button.disabled=false;button.textContent="Delete all PDFs";}
 });
-async function init(){setConnected();try{await Promise.all([load(),refreshPdfControls()]);}catch(error){console.error("Teacher submissions failed:",error);}}
+async function init(){setConnected();try{
+ const sessionResponse=await fetch("/api/admin/session",{credentials:"same-origin",cache:"no-store"});
+ const sessionData=await sessionResponse.json().catch(()=>({}));
+ adminCsrf=sessionData.csrf_token||"";
+ await Promise.all([load(),refreshPdfControls()]);
+ }catch(error){console.error("Teacher submissions failed:",error);}}
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init,{once:true});else init();
 })();
