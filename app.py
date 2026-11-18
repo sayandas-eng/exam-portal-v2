@@ -895,6 +895,7 @@ def admin_list_attempts():
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
             WHERE a.status IN ('submitted', 'evaluated')
+              AND a.submitted_at IS NOT NULL
               AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)
             GROUP BY a.id, e.id
             ORDER BY a.submitted_at DESC NULLS LAST, a.started_at DESC
@@ -1192,7 +1193,8 @@ def download_all_student_rankings_pdf():
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
-            WHERE a.status IN ('submitted', 'evaluated') AND e.pdf_enabled=TRUE
+            WHERE a.status IN ('submitted', 'evaluated') AND a.submitted_at IS NOT NULL
+              AND e.pdf_enabled=TRUE
               AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)
             GROUP BY e.id, a.id
             ORDER BY e.title, obtained_marks DESC, a.submitted_at ASC, a.student_name ASC
