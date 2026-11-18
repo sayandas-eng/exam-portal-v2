@@ -893,6 +893,7 @@ def admin_list_attempts():
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
             WHERE a.status IN ('submitted', 'evaluated')
+              AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)
             GROUP BY a.id, e.id
             ORDER BY a.submitted_at DESC NULLS LAST, a.started_at DESC
         """)
@@ -909,6 +910,7 @@ def admin_attempt_detail(attempt_id):
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE a.id=%s
+              AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)
         """, (attempt_id,))
         attempt = cur.fetchone()
         if not attempt:
