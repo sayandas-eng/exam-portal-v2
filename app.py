@@ -767,6 +767,14 @@ def submit_attempt(attempt_id):
                   reviewed_at=now(), updated_at=now()
             """, (attempt_id, q["question_id"], auto_marks, auto_marks, feedback))
         cur.execute("UPDATE portal_v2_attempts SET status='evaluated', evaluated_at=now() WHERE id=%s", (attempt_id,))
+        # A new submission after the teacher cleared PDFs makes this exam's
+        # dynamically generated individual and ranking PDFs available again.
+        cur.execute("""
+            UPDATE portal_v2_exams
+            SET pdf_enabled=TRUE
+            WHERE id=(SELECT exam_id FROM portal_v2_attempts WHERE id=%s)
+              AND status='live' AND available_from <= now() AND now() < available_until
+        """, (attempt_id,))
     return jsonify({"ok": True, "status": "evaluated", "result_released": True, "auto_submitted": expired})
 
 
