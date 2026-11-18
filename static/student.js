@@ -55,7 +55,7 @@
   renderNavOnly()
  }
  function renderNavOnly(){$$("#question-nav .nav-q").forEach((b,i)=>b.classList.toggle("answered",answered(answers[questions[i].id])));$("#answered-count").textContent=Object.values(answers).filter(answered).length+" answered"}
- $("#answer-area").addEventListener("change",()=>saveCurrent().catch(()=>{}));$("#answer-area").addEventListener("input",e=>{if(e.target.id==="written-answer"){clearTimeout(e.target._save);e.target._save=setTimeout(()=>saveCurrent().catch(()=>{}),700)}});
+ $("#answer-area").addEventListener("change",()=>saveCurrent().catch(()=>{}));$("#answer-area").addEventListener("input",e=>{if(e.target.id==="written-answer"){if(e.target._save)clearTimeout(e.target._save);e.target._save=setTimeout(()=>saveCurrent().catch(()=>{}),700)}});
  $("#question-nav").onclick=async e=>{const b=e.target.closest("[data-index]");if(!b)return;try{await saveCurrent();index=Number(b.dataset.index);render()}catch(_){}};
  $("#previous").onclick=async()=>{try{await saveCurrent();index=Math.max(0,index-1);render()}catch(_){}};
  $("#next").onclick=async()=>{try{await saveCurrent();index=Math.min(questions.length-1,index+1);render()}catch(_){}};
