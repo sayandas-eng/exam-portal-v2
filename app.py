@@ -579,7 +579,7 @@ def resume_attempt(attempt_id):
         if attempt["status"] != "in_progress":
             return error("This attempt is no longer in progress", 409)
         now = datetime.now(timezone.utc)
-        if attempt["exam_status"] != "live" or now < attempt["available_from"] or now >= (attempt["available_until"] - timedelta(days=1)):
+        if attempt["exam_status"] != "live" or now < attempt["available_from"] or now >= attempt["available_until"]:
             cur.execute("UPDATE portal_v2_attempts SET status='submitted', submitted_at=now() WHERE id=%s AND status='in_progress'", (attempt_id,))
             cur.execute("UPDATE portal_v2_answers SET is_final=true WHERE attempt_id=%s", (attempt_id,))
             return error("The examination availability window has closed.", 409)
@@ -817,20 +817,22 @@ def _auto_evaluate_pending_attempts(cur):
     """Backfill automatic marks for submitted attempts created before auto-grading completed."""
     cur.execute("""
         SELECT a.id FROM portal_v2_attempts a
-        WHERE a.status='submitted'
-           OR EXISTS (
-               SELECT 1 FROM portal_v2_evaluations ev
-               WHERE ev.attempt_id=a.id AND ev.final_marks IS NULL
-                 AND ev.reviewed_by='AutoMark'
-           )
-           OR EXISTS (
-               SELECT 1 FROM portal_v2_questions q
-               WHERE q.exam_id=a.exam_id
-                 AND NOT EXISTS (
-                     SELECT 1 FROM portal_v2_evaluations ev
-                     WHERE ev.attempt_id=a.id AND ev.question_id=q.id
-                 )
-           )
+        WHERE a.status IN ('submitted', 'evaluated')
+          AND (
+               EXISTS (
+                   SELECT 1 FROM portal_v2_evaluations ev
+                   WHERE ev.attempt_id=a.id AND ev.final_marks IS NULL
+                     AND ev.reviewed_by='AutoMark'
+               )
+               OR EXISTS (
+                   SELECT 1 FROM portal_v2_questions q
+                   WHERE q.exam_id=a.exam_id
+                     AND NOT EXISTS (
+                         SELECT 1 FROM portal_v2_evaluations ev
+                         WHERE ev.attempt_id=a.id AND ev.question_id=q.id
+                     )
+               )
+          )
         ORDER BY a.submitted_at
     """)
     pending = [row["id"] for row in cur.fetchall()]
@@ -1002,7 +1004,8 @@ def download_attempt_result_pdf(attempt_id):
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT a.id, a.student_name, a.student_class, a.status,
-                   a.submitted_at, e.title AS exam_title, e.total_marks, e.pdf_enabled
+                   a.submitted_at, e.title AS exam_title, e.total_marks, e.pdf_enabled,
+                   e.pdf_cleared_at
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE a.id=%s
@@ -1012,10 +1015,7 @@ def download_attempt_result_pdf(attempt_id):
             return error("Attempt not found", 404)
         if not result["pdf_enabled"]:
             return error("PDF downloads for this exam have been cleared by the teacher.", 410)
-        with db() as conn, conn.cursor() as cur:
-            cur.execute("SELECT pdf_cleared_at FROM portal_v2_exams WHERE id=(SELECT exam_id FROM portal_v2_attempts WHERE id=%s)", (attempt_id,))
-            cleared = cur.fetchone()
-        if cleared and cleared["pdf_cleared_at"] and (not result["submitted_at"] or result["submitted_at"] <= cleared["pdf_cleared_at"]):
+        if result["pdf_cleared_at"] and (not result["submitted_at"] or result["submitted_at"] <= result["pdf_cleared_at"]):
             return error("This result PDF was cleared by the teacher.", 410)
         if result["status"] != "evaluated":
             return error("The result PDF is available after marks are finalised.", 409)
@@ -1184,6 +1184,7 @@ def admin_delete_all_pdfs():
 @app.get("/api/admin/rankings.pdf")
 def download_all_student_rankings_pdf():
     with db() as conn, conn.cursor() as cur:
+        _auto_evaluate_pending_attempts(cur)
         cur.execute("""
             SELECT e.id AS exam_id, e.title AS exam_title, e.target_class,
                    e.total_marks, a.student_name, a.student_class, a.submitted_at,
@@ -1191,7 +1192,7 @@ def download_all_student_rankings_pdf():
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
-            WHERE a.status='evaluated' AND e.pdf_enabled=TRUE
+            WHERE a.status IN ('submitted', 'evaluated') AND e.pdf_enabled=TRUE
               AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)
             GROUP BY e.id, a.id
             ORDER BY e.title, obtained_marks DESC, a.submitted_at ASC, a.student_name ASC
