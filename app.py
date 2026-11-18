@@ -306,11 +306,18 @@ def public_exams():
                      SELECT 1 FROM portal_v2_attempts a
                      WHERE a.exam_id=e.id
                        AND lower(btrim(a.student_name)) = lower(btrim(%s))
-                   ) AS already_submitted
+                       AND a.status <> 'in_progress'
+                   ) AS already_submitted,
+                   EXISTS (
+                     SELECT 1 FROM portal_v2_attempts a
+                     WHERE a.exam_id=e.id
+                       AND lower(btrim(a.student_name)) = lower(btrim(%s))
+                       AND a.status = 'in_progress'
+                   ) AS already_started
             FROM portal_v2_exams e
             WHERE e.status = 'live' AND e.available_from <= now() AND now() < e.available_until
             ORDER BY e.published_at DESC NULLS LAST
-        """, (session["student_name"],))
+        """, (session["student_name"], session["student_name"]))
         return jsonify({"ok": True, "exams": cur.fetchall()})
 
 
