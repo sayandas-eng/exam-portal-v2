@@ -1155,8 +1155,20 @@ def admin_delete_all_pdfs():
     if not admin_required():
         return error("Admin authentication required", 401)
     with db() as conn, conn.cursor() as cur:
-        cur.execute("UPDATE portal_v2_exams SET pdf_enabled=FALSE, pdf_cleared_at=now() WHERE pdf_enabled=TRUE")
-    return jsonify({"ok": True, "enabled": False, "message": "PDF downloads have been cleared. Student records and marks are unchanged."})
+        # This is a global reset: remove every student's attempt, saved answer,
+        # and evaluation across every exam. Exam definitions/questions remain.
+        cur.execute("""
+            DELETE FROM portal_v2_evaluations
+            WHERE attempt_id IN (SELECT id FROM portal_v2_attempts)
+        """)
+        cur.execute("""
+            DELETE FROM portal_v2_answers
+            WHERE attempt_id IN (SELECT id FROM portal_v2_attempts)
+        """)
+        cur.execute("DELETE FROM portal_v2_attempts")
+        # Keep all exams usable; new submissions will appear in the portal and PDFs.
+        cur.execute("UPDATE portal_v2_exams SET pdf_enabled=TRUE, pdf_cleared_at=NULL")
+    return jsonify({"ok": True, "enabled": True, "message": "All student submissions, answers, and result records have been deleted across every exam. Exam questions and settings remain."})
 
 
 @app.get("/api/admin/rankings.pdf")
