@@ -15,7 +15,7 @@
   try{const d=await api("/api/student/attempts");const rows=(d.attempts||[]).filter(a=>a.status==="in_progress");
    const section=$("#history-section");section.classList.toggle("hidden",rows.length===0);
    host.innerHTML=rows.length?rows.map(a=>{const date=a.started_at;return '<article class="history-card"><div class="history-main"><div><h3>'+esc(a.exam_title)+'</h3><p>'+esc(a.subject||"")+' · Started '+new Date(date).toLocaleString()+'</p></div><span class="status-pill in_progress">In progress</span></div><div class="history-bottom"><button class="button primary" data-resume="'+esc(a.id)+'">Resume exam →</button></div></article>'}).join(""):'<div class="empty">No unfinished examinations.</div>';
-  }catch(e){host.innerHTML='<div class="empty">Could not load examination history.</div>';notice(e.message)}
+  }catch(e){host.innerHTML="";$("#history-section").classList.add("hidden")}
  }
 
  async function resumeAttempt(id,button){
