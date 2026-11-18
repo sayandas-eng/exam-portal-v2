@@ -56,6 +56,26 @@ $("#finalise").addEventListener("click",async()=>{
  catch(error){notice(error.message);}
  finally{button.disabled=false;button.textContent="Save teacher adjustments";}
 });
-async function init(){setConnected();try{await load();}catch(error){console.error("Teacher submissions failed:",error);}}
+async function refreshPdfControls(){
+ const status=await api("/api/admin/pdfs/status");
+ const enabled=Boolean(status.enabled);
+ const ranking=$("#ranking-download"), clear=$("#delete-all-pdfs");
+ ranking.classList.toggle("hidden",!enabled);
+ clear.classList.toggle("hidden",!enabled);
+ document.querySelectorAll(".download").forEach(link=>link.classList.toggle("hidden",!enabled));
+ $("#download-result")?.classList.toggle("hidden",!enabled||current?.status!=="evaluated");
+}
+$("#delete-all-pdfs").addEventListener("click",async()=>{
+ if(!confirm("Delete access to ALL individual result PDFs and ranking PDFs? Student submissions and marks will remain untouched."))return;
+ const button=$("#delete-all-pdfs");button.disabled=true;button.textContent="Deleting…";
+ try{
+  await api("/api/admin/pdfs/delete-all",{method:"POST"});
+  await refreshPdfControls();
+  notice("All PDF downloads have been removed from the portal. Student records and marks are unchanged.");
+  await load();
+ }catch(error){notice(error.message);}
+ finally{button.disabled=false;button.textContent="Delete all PDFs";}
+});
+async function init(){setConnected();try{await Promise.all([load(),refreshPdfControls()]);}catch(error){console.error("Teacher submissions failed:",error);}}
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init,{once:true});else init();
 })();
