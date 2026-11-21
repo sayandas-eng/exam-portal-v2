@@ -1374,10 +1374,10 @@ def download_all_student_rankings_pdf():
         c.translate(W/2, H/2-5)
         c.rotate(34)
         try:
-            c.setFillAlpha(.018)
+            c.setFillAlpha(.008)
         except Exception:
             pass
-        c.setFillColor(colors.HexColor("#9bb5d2"))
+        c.setFillColor(colors.HexColor("#c8d8e8"))
         c.setFont("Times-Bold", 35)
         c.drawCentredString(0, 0, "Abhishek Santra English Guidance")
         c.restoreState()
@@ -1464,8 +1464,7 @@ def download_all_student_rankings_pdf():
                 obtained=float(row["obtained_marks"] or 0)
                 total=float(row["total_marks"] or 0)
                 c.setFillColor(navy); c.setFont("Helvetica-Bold",10)
-                c.drawRightString(x4-30,y_bottom+6.2,f"{obtained:g}")
-                c.setFont("Helvetica",9); c.drawString(x4-26,y_bottom+6.2,f"/ {total:g}")
+                c.drawCentredString((x3+x4)/2,y_bottom+6.2,f"{obtained:g} / {total:g}")
                 submitted=row["submitted_at"]
                 if submitted:
                     if submitted.tzinfo is None:
