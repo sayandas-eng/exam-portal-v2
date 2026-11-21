@@ -1374,7 +1374,7 @@ def download_all_student_rankings_pdf():
         c.translate(W/2, H/2-5)
         c.rotate(34)
         try:
-            c.setFillAlpha(.22)
+            c.setFillAlpha(.55)
         except Exception:
             pass
         c.setFillColor(colors.HexColor("#2d619e"))
@@ -1436,6 +1436,8 @@ def download_all_student_rankings_pdf():
             exam_title=pdf_text(chunk[0]["exam_title"] if chunk else "")
             draw_page_header(exam_title)
             top=table_top
+            # Keep the watermark behind every table fill and text so it never obscures results.
+            draw_watermark()
             # Header cells.
             c.setFillColor(pale_blue); c.roundRect(x0,top-header_h,x5-x0,header_h,6,fill=1,stroke=0)
             c.setFillColor(navy); c.setFont("Helvetica-Bold",9)
@@ -1485,7 +1487,6 @@ def download_all_student_rankings_pdf():
                 yy=top-header_h-ri*row_h
                 c.line(x0,yy,x5,yy)
             c.restoreState()
-            draw_watermark()
             c.showPage()
 
     c.save()
