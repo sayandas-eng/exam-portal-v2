@@ -467,28 +467,35 @@ def delete_exam(exam_id):
     if not admin_required():
         return error("Admin authentication required", 401)
     with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id, status FROM portal_v2_exams WHERE id=%s AND status <> 'deleted' FOR UPDATE", (exam_id,))
+        exam = cur.fetchone()
+        if not exam:
+            return error("Exam not found or already removed", 404)
+        # Delete all exam-specific student data, including in-progress attempts.
+        # The exam definition is retained internally with status='deleted' so
+        # audit/history references remain valid, but it disappears from portals.
         cur.execute("""
-            SELECT EXISTS (
-                SELECT 1 FROM portal_v2_attempts
-                WHERE exam_id=%s AND status='in_progress'
-            ) AS has_active_attempt
+            DELETE FROM portal_v2_evaluations
+            WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id=%s)
         """, (exam_id,))
-        if cur.fetchone()["has_active_attempt"]:
-            return error("This exam has students with an attempt in progress. Wait until they submit or their attempts expire before deleting it.", 409)
+        cur.execute("""
+            DELETE FROM portal_v2_answers
+            WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id=%s)
+        """, (exam_id,))
+        cur.execute("DELETE FROM portal_v2_attempts WHERE exam_id=%s", (exam_id,))
+        deleted_attempts = cur.rowcount
         cur.execute("""
             UPDATE portal_v2_exams
-            SET status='deleted'
-            WHERE id=%s AND status NOT IN ('archived','deleted')
-            RETURNING id
+            SET status='deleted', pdf_enabled=FALSE, pdf_cleared_at=now()
+            WHERE id=%s
         """, (exam_id,))
-        if not cur.fetchone():
-            return error("Exam not found or already removed", 404)
         cur.execute("""
             INSERT INTO portal_v2_audit_log (actor, action, entity_type, entity_id)
-            VALUES ('admin', 'exam_deleted', 'exam', %s)
+            VALUES ('admin', 'exam_deleted_with_submissions', 'exam', %s)
         """, (exam_id,))
     return jsonify({"ok": True, "exam_id": exam_id, "status": "deleted",
-                    "records_preserved": True})
+                    "deleted_attempts": deleted_attempts,
+                    "message": "The examination and all its submissions, answers, marks, and results have been deleted."})
 
 
 @app.post("/api/exams/<exam_id>/start")
