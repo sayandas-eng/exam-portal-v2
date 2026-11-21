@@ -21,7 +21,7 @@ async function loadExams(){
  try{
   const data=await api("/api/teacher/exams?refresh="+Date.now());
   const exams=data.exams||[];
-  wrap.innerHTML=exams.length?exams.map(e=>'<button type="button" class="exam-card" data-exam="'+esc(e.id)+'"><span class="exam-card-top"><span class="exam-status">'+esc(String(e.status||"").replace(/_/g," "))+'</span><span class="exam-count">'+Number(e.submission_count||0)+' submitted</span></span><strong>'+esc(e.title)+'</strong><span class="exam-subject">'+esc(e.subject||"")+'</span><span class="exam-card-bottom"><span>Enter examination</span><b>→</b></span></button>').join(""):'<div class="empty exam-loading">No examinations found.</div>';
+  wrap.innerHTML=exams.length?exams.map(e=>'<article class="exam-card"><span class="exam-card-top"><span class="exam-status">'+esc(String(e.status||"").replace(/_/g," "))+'</span><span class="exam-count">'+Number(e.submission_count||0)+' submitted</span></span><strong>'+esc(e.title)+'</strong><span class="exam-subject">'+esc(e.subject||"")+'</span><div class="exam-card-actions"><button type="button" class="exam-enter" data-exam="'+esc(e.id)+'">Enter examination <b>→</b></button><button type="button" class="exam-delete" data-delete-exam="'+esc(e.id)+'" data-title="'+esc(e.title)+'">Delete exam</button></div></article>').join(""):'<div class="empty exam-loading">No examinations found.</div>';
  }catch(error){wrap.innerHTML='<div class="empty exam-loading">Unable to load examinations.</div>';notice("Could not load examinations: "+error.message);}
 }
 async function load(){
@@ -60,7 +60,20 @@ async function openAttempt(id){
  updateTotal();$("#list-view").classList.add("hidden");$("#review-view").classList.remove("hidden");
 }
 $("#refresh-exams").addEventListener("click",loadExams);
-$("#exam-cards").addEventListener("click",event=>{const card=event.target.closest("[data-exam]");if(card)enterExam(card.dataset.exam).catch(e=>notice(e.message));});
+$("#exam-cards").addEventListener("click",async event=>{
+ const enter=event.target.closest("[data-exam]");
+ if(enter){enterExam(enter.dataset.exam).catch(e=>notice(e.message));return;}
+ const del=event.target.closest("[data-delete-exam]");
+ if(!del)return;
+ const examId=del.dataset.deleteExam, title=del.dataset.title;
+ if(!confirm('PERMANENTLY DELETE "'+title+'" from the examination forum AND delete every submission, saved answer, mark, and result belonging to it? This cannot be undone.'))return;
+ del.disabled=true;del.textContent="Deleting…";
+ try{
+  const result=await api("/api/admin/exams/"+encodeURIComponent(examId)+"/delete",{method:"POST"});
+  notice(result.message||"Examination and its submissions deleted.");
+  await loadExams();
+ }catch(error){notice("Could not delete examination: "+error.message);del.disabled=false;del.textContent="Delete exam";}
+});
 $("#back-exams").addEventListener("click",()=>{$("#list-view").classList.add("hidden");$("#exam-list-view").classList.remove("hidden");selectedExam=null;loadExams();});
 $("#refresh").addEventListener("click",()=>load());
 $("#rows").addEventListener("click",event=>{const button=event.target.closest("[data-open]");if(button)openAttempt(button.dataset.open).catch(e=>notice(e.message));});
