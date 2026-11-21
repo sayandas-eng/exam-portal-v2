@@ -876,6 +876,25 @@ def _auto_evaluate_pending_attempts(cur):
         cur.execute("UPDATE portal_v2_attempts SET status='evaluated', evaluated_at=COALESCE(evaluated_at, now()) WHERE id=%s", (attempt_id,))
 
 
+@app.get("/api/teacher/exams")
+def teacher_exam_overview():
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT e.id, e.title, e.subject, e.status, e.available_from, e.available_until,
+                   COUNT(a.id) FILTER (
+                       WHERE a.status IN ('submitted', 'evaluated')
+                         AND a.submitted_at IS NOT NULL
+                         AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)
+                   )::int AS submission_count
+            FROM portal_v2_exams e
+            LEFT JOIN portal_v2_attempts a ON a.exam_id=e.id
+            WHERE e.status <> 'deleted'
+            GROUP BY e.id
+            ORDER BY e.created_at DESC
+        """)
+        return jsonify({"ok": True, "exams": cur.fetchall()})
+
+
 @app.get("/api/admin/attempts")
 def admin_list_attempts():
     with db() as conn, conn.cursor() as cur:
@@ -897,9 +916,10 @@ def admin_list_attempts():
             WHERE a.status IN ('submitted', 'evaluated')
               AND a.submitted_at IS NOT NULL
               AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)
+              AND (%s IS NULL OR e.id::text = %s)
             GROUP BY a.id, e.id
             ORDER BY a.submitted_at DESC NULLS LAST, a.started_at DESC
-        """)
+        """, (request.args.get("exam_id") or None, request.args.get("exam_id") or None))
         return jsonify({"ok": True, "attempts": cur.fetchall()})
 
 
@@ -1182,6 +1202,36 @@ def admin_delete_all_pdfs():
     return response
 
 
+@app.post("/api/admin/exams/<exam_id>/submissions/delete")
+def admin_delete_exam_submissions(exam_id):
+    if not admin_required():
+        return error("Admin authentication required", 401)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM portal_v2_exams WHERE id=%s", (exam_id,))
+        if not cur.fetchone():
+            return error("Examination not found", 404)
+        cur.execute("""
+            DELETE FROM portal_v2_evaluations
+            WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id=%s)
+        """, (exam_id,))
+        cur.execute("""
+            DELETE FROM portal_v2_answers
+            WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id=%s)
+        """, (exam_id,))
+        cur.execute("DELETE FROM portal_v2_attempts WHERE exam_id=%s", (exam_id,))
+        deleted_attempts = cur.rowcount
+        cur.execute("UPDATE portal_v2_exams SET pdf_enabled=TRUE, pdf_cleared_at=NULL WHERE id=%s", (exam_id,))
+    response = jsonify({
+        "ok": True,
+        "deleted_attempts": deleted_attempts,
+        "message": "All submissions and results for this examination have been deleted."
+    })
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 @app.get("/api/admin/rankings.pdf")
 def download_all_student_rankings_pdf():
     with db() as conn, conn.cursor() as cur:
@@ -1196,9 +1246,10 @@ def download_all_student_rankings_pdf():
             WHERE a.status IN ('submitted', 'evaluated') AND a.submitted_at IS NOT NULL
               AND e.pdf_enabled=TRUE
               AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)
+              AND (%s IS NULL OR e.id::text = %s)
             GROUP BY e.id, a.id
-            ORDER BY e.title, obtained_marks DESC, a.submitted_at ASC, a.student_name ASC
-        """)
+            ORDER BY obtained_marks DESC, a.submitted_at ASC NULLS LAST, a.student_name ASC
+        """, (request.args.get("exam_id") or None, request.args.get("exam_id") or None))
         records = cur.fetchall()
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib import colors
