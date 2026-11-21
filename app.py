@@ -1307,56 +1307,96 @@ def download_all_student_rankings_pdf():
               AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)
               AND (CAST(%s AS TEXT) IS NULL OR e.id::text = %s)
             GROUP BY e.id, a.id
-            ORDER BY obtained_marks DESC, a.submitted_at ASC NULLS LAST, a.student_name ASC
+            ORDER BY e.title ASC, obtained_marks DESC, a.submitted_at ASC NULLS LAST, a.student_name ASC
         """, (request.args.get("exam_id") or None, request.args.get("exam_id") or None))
         records = cur.fetchall()
-    from reportlab.lib.pagesizes import A4, landscape
+
+    from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.enums import TA_CENTER
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
-
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether
     from reportlab.pdfgen import canvas as pdf_canvas
+    from reportlab.lib.units import mm
+    from xml.sax.saxutils import escape
+    import unicodedata
+
+    pdf_text = lambda value: unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+    page_width, page_height = A4
+    navy = colors.HexColor("#15396b")
+    blue = colors.HexColor("#2463ad")
+    pale_blue = colors.HexColor("#d9eaff")
+    line_blue = colors.HexColor("#7298ca")
 
     class RankingWatermarkCanvas(pdf_canvas.Canvas):
         def showPage(self):
-            # Draw after page content so the watermark overlays headings and table cells.
-            page_width, page_height = landscape(A4)
+            # Overlay a light, diagonal watermark over all page content, as in the supplied reference.
             self.saveState()
             self.translate(page_width / 2, page_height / 2)
-            self.rotate(35)
-            self.setFillColor(colors.HexColor("#64748b"))
+            self.rotate(34)
+            self.setFillColor(colors.HexColor("#2b5f9d"))
             if hasattr(self, "setFillAlpha"):
-                self.setFillAlpha(0.13)
+                self.setFillAlpha(0.22)
             self.setFont("Helvetica-Bold", 34)
             self.drawCentredString(0, 0, "Abhishek Santra English Guidance")
             self.restoreState()
             super().showPage()
 
     def add_pdf_branding(canvas, doc):
-        page_width, _ = landscape(A4)
         canvas.saveState()
-        canvas.setFillColor(colors.HexColor("#475569"))
-        canvas.setFont("Helvetica-Bold", 8)
-        canvas.drawRightString(page_width - 30, 18, "Checked By Abhishek Santra")
+        # Thin blue page frame and restrained corner accents.
+        canvas.setStrokeColor(blue)
+        canvas.setLineWidth(1.0)
+        canvas.roundRect(13, 13, page_width - 26, page_height - 26, 11, stroke=1, fill=0)
+        canvas.setStrokeColor(colors.HexColor("#8bb5e8"))
+        canvas.setLineWidth(3)
+        canvas.line(14, page_height - 25, 75, page_height - 25)
+        canvas.line(page_width - 75, 25, page_width - 14, 25)
+        canvas.setFillColor(colors.HexColor("#526b8d"))
+        canvas.setFont("Helvetica", 7)
+        canvas.drawCentredString(page_width / 2, 20, "Abhishek Santra English Guidance")
         canvas.restoreState()
-    from xml.sax.saxutils import escape
-    import unicodedata
-    pdf_text = lambda value: unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=30, leftMargin=30, topMargin=35, bottomMargin=35)
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4, rightMargin=25*mm, leftMargin=25*mm,
+        topMargin=12*mm, bottomMargin=13*mm
+    )
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("RankingTitle", parent=styles["Title"], alignment=TA_CENTER, textColor=colors.HexColor("#172554"), fontSize=18, spaceAfter=5)
-    sub_style = ParagraphStyle("RankingSub", parent=styles["Normal"], alignment=TA_CENTER, textColor=colors.HexColor("#64748b"), fontSize=9, spaceAfter=16)
-    story = [Paragraph("STUDENT RANKING LIST", title_style), Paragraph("All evaluated examinations - Ranked by marks obtained", sub_style)]
+    brand_style = ParagraphStyle(
+        "RankingBrand", parent=styles["Title"], alignment=TA_CENTER,
+        textColor=navy, fontName="Helvetica-Bold", fontSize=20, leading=23,
+        spaceAfter=2
+    )
+    title_style = ParagraphStyle(
+        "RankingHeading", parent=styles["Title"], alignment=TA_CENTER,
+        textColor=colors.white, backColor=blue, fontName="Helvetica-Bold",
+        fontSize=17, leading=22, borderRadius=18, borderPadding=(4, 20, 4, 20),
+        spaceBefore=3, spaceAfter=12
+    )
+    exam_style = ParagraphStyle(
+        "ExamHeading", parent=styles["Normal"], alignment=TA_CENTER,
+        textColor=navy, fontName="Helvetica-Bold", fontSize=10, leading=13,
+        spaceAfter=7
+    )
+    story = []
     grouped = {}
     for row in records:
         grouped.setdefault(str(row["exam_id"]), []).append(row)
+
     if not grouped:
-        story.append(Paragraph("No evaluated student results are available yet.", styles["Normal"]))
-    for exam_id, rows in grouped.items():
+        story.extend([
+            Paragraph("Abhishek Santra English Guidance", brand_style),
+            Spacer(1, 8),
+            Paragraph("Exam Ranking", title_style),
+            Paragraph("No submitted student results are available yet.", exam_style)
+        ])
+
+    for group_index, (exam_id, rows) in enumerate(grouped.items()):
+        if group_index:
+            story.append(PageBreak())
         first = rows[0]
-        display_exam_title = str(first["exam_title"] or "")
+        display_exam_title = pdf_text(first["exam_title"] or "")
         target_class = str(first.get("target_class") or "").strip()
         if target_class:
             for separator in (" — ", " – ", " - "):
@@ -1364,37 +1404,87 @@ def download_all_student_rankings_pdf():
                 if display_exam_title.endswith(suffix):
                     display_exam_title = display_exam_title[:-len(suffix)].rstrip()
                     break
-        story.append(Paragraph(escape(pdf_text(display_exam_title)), styles["Heading2"]))
-        table_rows = [["Sl No", "Student name", "Class", "Marks obtained", "Total marks", "Submitted (IST)"]]
-        for index, row in enumerate(rows, 1):
-            value = float(row["obtained_marks"] or 0)
-            rank = index
+
+        story.extend([
+            Paragraph("Abhishek Santra English Guidance", brand_style),
+            Paragraph("Exam Ranking", title_style),
+            Paragraph(escape(display_exam_title), exam_style)
+        ])
+
+        table_rows = [[
+            Paragraph("<b>Rank</b>", styles["Normal"]),
+            Paragraph("<b>Name</b>", styles["Normal"]),
+            Paragraph("<b>Class</b>", styles["Normal"]),
+            Paragraph("<b>Obtained / Total</b>", styles["Normal"]),
+            Paragraph("<b>Submission Time</b>", styles["Normal"])
+        ]]
+        for rank, row in enumerate(rows, 1):
+            obtained = float(row["obtained_marks"] or 0)
+            total = float(row["total_marks"] or 0)
             submitted = row["submitted_at"]
             if submitted:
                 if submitted.tzinfo is None:
                     submitted = submitted.replace(tzinfo=timezone.utc)
-                date_text = submitted.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y %I:%M %p")
+                submitted_text = submitted.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y, %I:%M %p")
             else:
-                date_text = "-"
-            table_rows.append([str(rank), pdf_text(row["student_name"]), pdf_text(row["student_class"]), f"{value:g}", f'{float(row["total_marks"]):g}', pdf_text(date_text)])
-        table = Table(table_rows, repeatRows=1, colWidths=[42, 180, 65, 85, 75, 125])
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef2ff")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#3730a3")),
+                submitted_text = ""
+            table_rows.append([
+                str(rank),
+                Paragraph(escape(pdf_text(row["student_name"])), styles["Normal"]),
+                escape(pdf_text(row["student_class"])),
+                Paragraph(f"<b>{obtained:g}</b> / {total:g}", styles["Normal"]),
+                pdf_text(submitted_text)
+            ])
+
+        table = Table(
+            table_rows, repeatRows=1,
+            colWidths=[19*mm, 48*mm, 19*mm, 38*mm, 51*mm],
+            rowHeights=[24] + [19.5] * len(rows)
+        )
+        style_commands = [
+            ("BACKGROUND", (0, 0), (-1, 0), pale_blue),
+            ("TEXTCOLOR", (0, 0), (-1, 0), navy),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ("GRID", (0, 0), (-1, -1), .4, colors.HexColor("#d8deeb")),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8.6),
+            ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#101828")),
+            ("GRID", (0, 0), (-1, -1), 0.45, line_blue),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f9fc")]),
+            ("ALIGN", (0, 0), (0, -1), "CENTER"),
+            ("ALIGN", (2, 0), (2, -1), "CENTER"),
+            ("ALIGN", (3, 0), (3, -1), "CENTER"),
+            ("ALIGN", (4, 0), (4, -1), "CENTER"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 7),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ]))
-        story.extend([table, Spacer(1, 18)])
-    doc.build(story, onFirstPage=add_pdf_branding, onLaterPages=add_pdf_branding, canvasmaker=RankingWatermarkCanvas)
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3)
+        ]
+        # Highlight the leading three ranks with the reference's gold, silver and bronze tones.
+        medal_backgrounds = [
+            colors.HexColor("#fff0bd"),
+            colors.HexColor("#e8ebf0"),
+            colors.HexColor("#f8ddca")
+        ]
+        for medal_index, medal_color in enumerate(medal_backgrounds, 1):
+            if medal_index <= len(rows):
+                style_commands.append(("BACKGROUND", (0, medal_index), (-1, medal_index), medal_color))
+                style_commands.append(("FONTNAME", (0, medal_index), (0, medal_index), "Helvetica-Bold"))
+        table.setStyle(TableStyle(style_commands))
+        story.append(table)
+
+    doc.build(
+        story, onFirstPage=add_pdf_branding, onLaterPages=add_pdf_branding,
+        canvasmaker=RankingWatermarkCanvas
+    )
     buffer.seek(0)
-    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name="student_rankings.pdf")
+    response = send_file(
+        buffer, mimetype="application/pdf", as_attachment=True,
+        download_name="student_rankings.pdf"
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 @app.errorhandler(404)
 def not_found(_):
