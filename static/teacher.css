@@ -77,3 +77,13 @@ header{gap:24px}
 .exam-section-head h2{margin:0 0 5px;font:800 23px Manrope}
 .exam-section-head .eyebrow{margin:0 0 7px}
 @media(max-width:650px){.exam-grid{grid-template-columns:1fr}.exam-section-head{align-items:stretch}.exam-section-head .head-actions{width:100%}}
+
+.exam-card{cursor:default}
+.exam-card:hover{transform:none}
+.exam-card-actions{display:flex;gap:9px;align-items:center;margin-top:auto;padding-top:12px;border-top:1px solid #eff0f5}
+.exam-enter,.exam-delete{appearance:none;border:0;border-radius:8px;padding:10px 12px;font:700 12px "DM Sans",sans-serif;cursor:pointer}
+.exam-enter{flex:1;display:flex;align-items:center;justify-content:space-between;background:#f2f1ff;color:#5148d9}
+.exam-enter:hover{background:#e8e6ff}
+.exam-delete{background:#fff5f4;border:1px solid #f3d0cc;color:#b42318}
+.exam-delete:hover{background:#ffebe9}
+.exam-delete:disabled{opacity:.6;cursor:wait}
