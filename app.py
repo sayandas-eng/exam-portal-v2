@@ -1313,177 +1313,186 @@ def download_all_student_rankings_pdf():
 
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_CENTER
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether
     from reportlab.pdfgen import canvas as pdf_canvas
-    from reportlab.lib.units import mm
+    from reportlab.pdfbase.pdfmetrics import stringWidth
     from xml.sax.saxutils import escape
     import unicodedata
 
+    W, H = A4
+    navy = colors.HexColor("#12396d")
+    blue = colors.HexColor("#2362aa")
+    mid_blue = colors.HexColor("#6e9bd3")
+    pale_blue = colors.HexColor("#cfe2fb")
+    grid_blue = colors.HexColor("#7f9fc9")
     pdf_text = lambda value: unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
-    page_width, page_height = A4
-    navy = colors.HexColor("#15396b")
-    blue = colors.HexColor("#2463ad")
-    pale_blue = colors.HexColor("#d9eaff")
-    line_blue = colors.HexColor("#7298ca")
-
-    class RankingWatermarkCanvas(pdf_canvas.Canvas):
-        def showPage(self):
-            # Overlay a light, diagonal watermark over all page content, as in the supplied reference.
-            self.saveState()
-            self.translate(page_width / 2, page_height / 2)
-            self.rotate(34)
-            self.setFillColor(colors.HexColor("#2b5f9d"))
-            if hasattr(self, "setFillAlpha"):
-                self.setFillAlpha(0.22)
-            self.setFont("Helvetica-Bold", 34)
-            self.drawCentredString(0, 0, "Abhishek Santra English Guidance")
-            self.restoreState()
-            super().showPage()
-
-    def add_pdf_branding(canvas, doc):
-        canvas.saveState()
-        # Thin blue page frame and restrained corner accents.
-        canvas.setStrokeColor(blue)
-        canvas.setLineWidth(1.0)
-        canvas.roundRect(13, 13, page_width - 26, page_height - 26, 11, stroke=1, fill=0)
-        canvas.setStrokeColor(colors.HexColor("#8bb5e8"))
-        canvas.setLineWidth(3)
-        canvas.line(14, page_height - 25, 75, page_height - 25)
-        canvas.line(page_width - 75, 25, page_width - 14, 25)
-        canvas.setFillColor(colors.HexColor("#526b8d"))
-        canvas.setFont("Helvetica", 7)
-        canvas.drawCentredString(page_width / 2, 20, "Abhishek Santra English Guidance")
-        canvas.restoreState()
 
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, pagesize=A4, rightMargin=25*mm, leftMargin=25*mm,
-        topMargin=12*mm, bottomMargin=13*mm
-    )
-    styles = getSampleStyleSheet()
-    brand_style = ParagraphStyle(
-        "RankingBrand", parent=styles["Title"], alignment=TA_CENTER,
-        textColor=navy, fontName="Helvetica-Bold", fontSize=20, leading=23,
-        spaceAfter=2
-    )
-    title_style = ParagraphStyle(
-        "RankingHeading", parent=styles["Title"], alignment=TA_CENTER,
-        textColor=colors.white, backColor=blue, fontName="Helvetica-Bold",
-        fontSize=17, leading=22, borderRadius=18, borderPadding=(4, 20, 4, 20),
-        spaceBefore=3, spaceAfter=12
-    )
-    exam_style = ParagraphStyle(
-        "ExamHeading", parent=styles["Normal"], alignment=TA_CENTER,
-        textColor=navy, fontName="Helvetica-Bold", fontSize=10, leading=13,
-        spaceAfter=7
-    )
-    story = []
-    grouped = {}
+    c = pdf_canvas.Canvas(buffer, pagesize=A4)
+
+    def centered_fit(text, x, y, max_width, font, size, color):
+        text = pdf_text(text)
+        while size > 6 and stringWidth(text, font, size) > max_width:
+            size -= .5
+        c.setFillColor(color)
+        c.setFont(font, size)
+        c.drawCentredString(x, y, text)
+
+    def draw_book(cx, cy, scale=1):
+        c.saveState()
+        c.setFillColor(navy)
+        c.setStrokeColor(navy)
+        c.setLineWidth(1.5*scale)
+        # Two open pages and a central spine, matching the reference logo.
+        p = c.beginPath()
+        p.moveTo(cx, cy-8*scale); p.curveTo(cx-9*scale, cy-2*scale, cx-18*scale, cy+5*scale, cx-29*scale, cy+3*scale)
+        p.lineTo(cx-29*scale, cy+24*scale); p.curveTo(cx-17*scale, cy+27*scale, cx-8*scale, cy+20*scale, cx, cy+15*scale); p.close()
+        c.drawPath(p, fill=1, stroke=0)
+        p = c.beginPath()
+        p.moveTo(cx, cy-8*scale); p.curveTo(cx+9*scale, cy-2*scale, cx+18*scale, cy+5*scale, cx+29*scale, cy+3*scale)
+        p.lineTo(cx+29*scale, cy+24*scale); p.curveTo(cx+17*scale, cy+27*scale, cx+8*scale, cy+20*scale, cx, cy+15*scale); p.close()
+        c.drawPath(p, fill=1, stroke=0)
+        c.setStrokeColor(colors.white)
+        c.setLineWidth(1.1*scale)
+        c.line(cx, cy-5*scale, cx, cy+18*scale)
+        c.restoreState()
+
+    def draw_cap(cx, cy, scale=1):
+        c.saveState()
+        c.setFillColor(navy)
+        p=c.beginPath()
+        p.moveTo(cx-18*scale,cy+3*scale); p.lineTo(cx,cy+12*scale); p.lineTo(cx+18*scale,cy+3*scale); p.lineTo(cx,cy-5*scale); p.close()
+        c.drawPath(p,fill=1,stroke=0)
+        c.setFillColor(navy)
+        c.rect(cx-10*scale,cy-8*scale,20*scale,4*scale,fill=1,stroke=0)
+        c.setStrokeColor(navy); c.setLineWidth(1.2*scale)
+        c.line(cx+14*scale,cy+4*scale,cx+17*scale,cy-8*scale)
+        c.circle(cx+17*scale,cy-10*scale,1.7*scale,fill=1,stroke=0)
+        c.restoreState()
+
+    def draw_watermark():
+        c.saveState()
+        c.translate(W/2, H/2-5)
+        c.rotate(34)
+        try:
+            c.setFillAlpha(.22)
+        except Exception:
+            pass
+        c.setFillColor(colors.HexColor("#2d619e"))
+        c.setFont("Times-Bold", 35)
+        c.drawCentredString(0, 0, "Abhishek Santra English Guidance")
+        c.restoreState()
+
+    def draw_page_header(exam_title):
+        # Pale corner ribbons and white page, matching the supplied portrait sheet.
+        c.setFillColor(colors.HexColor("#f9fbff")); c.rect(0,0,W,H,fill=1,stroke=0)
+        c.saveState()
+        c.setStrokeColor(colors.HexColor("#a9c9f1")); c.setLineWidth(8)
+        p=c.beginPath(); p.moveTo(0,H-76); p.curveTo(28,H-45,62,H-20,112,H); c.drawPath(p,stroke=1,fill=0)
+        p=c.beginPath(); p.moveTo(W,H-76); p.curveTo(W-28,H-45,W-62,H-20,W-112,H); c.drawPath(p,stroke=1,fill=0)
+        p=c.beginPath(); p.moveTo(0,76); p.curveTo(28,45,62,20,112,0); c.drawPath(p,stroke=1,fill=0)
+        p=c.beginPath(); p.moveTo(W,76); p.curveTo(W-28,45,W-62,20,W-112,0); c.drawPath(p,stroke=1,fill=0)
+        c.setStrokeColor(colors.HexColor("#d1e2f8")); c.setLineWidth(3)
+        p=c.beginPath(); p.moveTo(0,H-92); p.curveTo(38,H-55,75,H-25,125,H); c.drawPath(p,stroke=1,fill=0)
+        p=c.beginPath(); p.moveTo(W,H-92); p.curveTo(W-38,H-55,W-75,H-25,W-125,H); c.drawPath(p,stroke=1,fill=0)
+        c.restoreState()
+
+        draw_book(103,H-42,.72)
+        c.setFillColor(navy); c.setFont("Times-Bold",25)
+        c.drawString(146,H-34,"Abhishek Santra English Guidance")
+        c.setStrokeColor(blue); c.setLineWidth(1.1)
+        c.line(146,H-46, W-28,H-46)
+        draw_cap(W/2,H-55,.72)
+
+        # Blue pill title and thin frame with a deliberate gap behind the title.
+        c.setFillColor(blue); c.roundRect(W/2-110,H-101,220,31,16,fill=1,stroke=0)
+        centered_fit("Exam Ranking",W/2,H-91,205,"Times-Bold",19,colors.white)
+        c.setStrokeColor(grid_blue); c.setLineWidth(1)
+        c.roundRect(13,15,W-26,H-119,10,fill=0,stroke=1)
+        c.line(13,H-108,W/2-120,H-108)
+        c.line(W/2+120,H-108,W-13,H-108)
+        if exam_title:
+            centered_fit(exam_title,W/2,H-126,W-80,"Helvetica-Bold",8.5,navy)
+
+    # Column positions mirror the five-column reference grid.
+    x0=23; x1=90; x2=245; x3=305; x4=420; x5=W-23
+    table_top=H-157
+    header_h=25
+    row_h=19.35
+    rows_per_page=30
+    grouped={}
     for row in records:
-        grouped.setdefault(str(row["exam_id"]), []).append(row)
+        grouped.setdefault(str(row["exam_id"]),[]).append(row)
 
     if not grouped:
-        story.extend([
-            Paragraph("Abhishek Santra English Guidance", brand_style),
-            Spacer(1, 8),
-            Paragraph("Exam Ranking", title_style),
-            Paragraph("No submitted student results are available yet.", exam_style)
-        ])
+        draw_page_header("")
+        c.setFillColor(navy); c.setFont("Helvetica",11)
+        c.drawCentredString(W/2,H/2,"No submitted student results are available yet.")
+        draw_watermark()
+        c.showPage()
 
-    for group_index, (exam_id, rows) in enumerate(grouped.items()):
-        if group_index:
-            story.append(PageBreak())
-        first = rows[0]
-        display_exam_title = pdf_text(first["exam_title"] or "")
-        target_class = str(first.get("target_class") or "").strip()
-        if target_class:
-            for separator in (" — ", " – ", " - "):
-                suffix = separator + target_class
-                if display_exam_title.endswith(suffix):
-                    display_exam_title = display_exam_title[:-len(suffix)].rstrip()
-                    break
+    for exam_id, rows in grouped.items():
+        chunks=[rows[i:i+rows_per_page] for i in range(0,len(rows),rows_per_page)] or [[]]
+        for chunk_index, chunk in enumerate(chunks):
+            exam_title=pdf_text(chunk[0]["exam_title"] if chunk else "")
+            draw_page_header(exam_title)
+            top=table_top
+            # Header cells.
+            c.setFillColor(pale_blue); c.roundRect(x0,top-header_h,x5-x0,header_h,6,fill=1,stroke=0)
+            c.setFillColor(navy); c.setFont("Helvetica-Bold",9)
+            c.drawCentredString((x0+x1)/2,top-16,"Rank")
+            c.drawCentredString((x1+x2)/2,top-16,"Name")
+            c.drawCentredString((x2+x3)/2,top-16,"Class")
+            c.drawCentredString((x3+x4)/2,top-16,"Obtained / Total")
+            c.drawCentredString((x4+x5)/2,top-16,"Submission Time")
 
-        story.extend([
-            Paragraph("Abhishek Santra English Guidance", brand_style),
-            Paragraph("Exam Ranking", title_style),
-            Paragraph(escape(display_exam_title), exam_style)
-        ])
+            for idx,row in enumerate(chunk):
+                y_top=top-header_h-idx*row_h
+                y_bottom=y_top-row_h
+                global_rank=chunk_index*rows_per_page+idx+1
+                # Rounded highlight bands for the first three ranks.
+                medal=[colors.HexColor("#ffe7a6"),colors.HexColor("#e5e8ee"),colors.HexColor("#f7d9c3")]
+                if global_rank<=3:
+                    c.setFillColor(medal[global_rank-1])
+                    c.roundRect(x0+1,y_bottom+1,x5-x0-2,row_h-2,7,fill=1,stroke=0)
+                c.setFillColor(colors.HexColor("#101828")); c.setFont("Helvetica-Bold" if global_rank<=3 else "Helvetica",10)
+                c.drawCentredString((x0+x1)/2,y_bottom+6.2,str(global_rank))
+                name=pdf_text(row["student_name"])
+                centered_fit(name,(x1+x2)/2,y_bottom+6.2,x2-x1-12,"Helvetica-Bold",9.5,colors.HexColor("#101828"))
+                centered_fit(pdf_text(row["student_class"]),(x2+x3)/2,y_bottom+6.2,x3-x2-8,"Helvetica",9.5,colors.HexColor("#101828"))
+                obtained=float(row["obtained_marks"] or 0)
+                total=float(row["total_marks"] or 0)
+                c.setFillColor(navy); c.setFont("Helvetica-Bold",10)
+                c.drawRightString(x4-30,y_bottom+6.2,f"{obtained:g}")
+                c.setFont("Helvetica",9); c.drawString(x4-26,y_bottom+6.2,f"/ {total:g}")
+                submitted=row["submitted_at"]
+                if submitted:
+                    if submitted.tzinfo is None:
+                        submitted=submitted.replace(tzinfo=timezone.utc)
+                    date_text=submitted.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y, %I:%M %p")
+                else:
+                    date_text=""
+                centered_fit(date_text,(x4+x5)/2,y_bottom+6.2,x5-x4-10,"Helvetica",8.5,colors.HexColor("#101828"))
 
-        table_rows = [[
-            Paragraph("<b>Rank</b>", styles["Normal"]),
-            Paragraph("<b>Name</b>", styles["Normal"]),
-            Paragraph("<b>Class</b>", styles["Normal"]),
-            Paragraph("<b>Obtained / Total</b>", styles["Normal"]),
-            Paragraph("<b>Submission Time</b>", styles["Normal"])
-        ]]
-        for rank, row in enumerate(rows, 1):
-            obtained = float(row["obtained_marks"] or 0)
-            total = float(row["total_marks"] or 0)
-            submitted = row["submitted_at"]
-            if submitted:
-                if submitted.tzinfo is None:
-                    submitted = submitted.replace(tzinfo=timezone.utc)
-                submitted_text = submitted.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y, %I:%M %p")
-            else:
-                submitted_text = ""
-            table_rows.append([
-                str(rank),
-                Paragraph(escape(pdf_text(row["student_name"])), styles["Normal"]),
-                escape(pdf_text(row["student_class"])),
-                Paragraph(f"<b>{obtained:g}</b> / {total:g}", styles["Normal"]),
-                pdf_text(submitted_text)
-            ])
+            # Fine blue table grid, drawn over the watermark like the reference.
+            table_bottom=top-header_h-len(chunk)*row_h
+            c.saveState()
+            c.setStrokeColor(grid_blue); c.setLineWidth(.45)
+            for xx in (x0,x1,x2,x3,x4,x5):
+                c.line(xx,table_bottom,xx,top)
+            c.line(x0,top,x5,top)
+            c.line(x0,top-header_h,x5,top-header_h)
+            for ri in range(1,len(chunk)+1):
+                yy=top-header_h-ri*row_h
+                c.line(x0,yy,x5,yy)
+            c.restoreState()
+            draw_watermark()
+            c.showPage()
 
-        table = Table(
-            table_rows, repeatRows=1,
-            colWidths=[17*mm, 45*mm, 18*mm, 37*mm, 43*mm],
-            rowHeights=[22] + [17.5] * len(rows)
-        )
-        style_commands = [
-            ("BACKGROUND", (0, 0), (-1, 0), pale_blue),
-            ("TEXTCOLOR", (0, 0), (-1, 0), navy),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8.6),
-            ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#101828")),
-            ("GRID", (0, 0), (-1, -1), 0.45, line_blue),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f9fc")]),
-            ("ALIGN", (0, 0), (0, -1), "CENTER"),
-            ("ALIGN", (2, 0), (2, -1), "CENTER"),
-            ("ALIGN", (3, 0), (3, -1), "CENTER"),
-            ("ALIGN", (4, 0), (4, -1), "CENTER"),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3)
-        ]
-        # Highlight the leading three ranks with the reference's gold, silver and bronze tones.
-        medal_backgrounds = [
-            colors.HexColor("#fff0bd"),
-            colors.HexColor("#e8ebf0"),
-            colors.HexColor("#f8ddca")
-        ]
-        for medal_index, medal_color in enumerate(medal_backgrounds, 1):
-            if medal_index <= len(rows):
-                style_commands.append(("BACKGROUND", (0, medal_index), (-1, medal_index), medal_color))
-                style_commands.append(("FONTNAME", (0, medal_index), (0, medal_index), "Helvetica-Bold"))
-        table.setStyle(TableStyle(style_commands))
-        story.append(table)
-
-    doc.build(
-        story, onFirstPage=add_pdf_branding, onLaterPages=add_pdf_branding,
-        canvasmaker=RankingWatermarkCanvas
-    )
+    c.save()
     buffer.seek(0)
-    response = send_file(
-        buffer, mimetype="application/pdf", as_attachment=True,
-        download_name="student_rankings.pdf"
-    )
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"] = "no-cache"
+    response=send_file(buffer,mimetype="application/pdf",as_attachment=True,download_name="student_rankings.pdf")
+    response.headers["Cache-Control"]="no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"]="no-cache"
     return response
 
 @app.errorhandler(404)
