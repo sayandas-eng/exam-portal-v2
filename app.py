@@ -975,7 +975,7 @@ def admin_list_attempts():
             WHERE a.status IN ('submitted', 'evaluated')
               AND a.submitted_at IS NOT NULL
               AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)
-              AND (%s IS NULL OR e.id::text = %s)
+              AND (CAST(%s AS TEXT) IS NULL OR e.id::text = %s)
             GROUP BY a.id, e.id
             ORDER BY a.submitted_at DESC NULLS LAST, a.started_at DESC
         """, (request.args.get("exam_id") or None, request.args.get("exam_id") or None))
