@@ -77,14 +77,14 @@ def purge_expired_exams():
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT id FROM portal_v2_exams
-            WHERE status IN ('live', 'deleted')
+            WHERE status = 'live'
               AND available_until IS NOT NULL AND available_until <= now()
             FOR UPDATE
         """)
         cur.fetchall()
         expired_exam_filter = """
             SELECT id FROM portal_v2_exams
-            WHERE status IN ('live', 'deleted')
+            WHERE status = 'live'
               AND available_until IS NOT NULL AND available_until <= now()
         """
         # Archive expired exams without deleting attempts, answers, or evaluation records.
@@ -883,9 +883,61 @@ def _auto_evaluate_pending_attempts(cur):
         cur.execute("UPDATE portal_v2_attempts SET status='evaluated', evaluated_at=COALESCE(evaluated_at, now()) WHERE id=%s", (attempt_id,))
 
 
+def _apply_teacher_exam_visibility_cleanup(cur):
+    """
+    One-time cleanup requested for the teacher exam forum:
+    retain all currently live exams and the named archived exam only.
+    Future archived exams remain visible after this marker is recorded.
+    """
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS portal_v2_settings (
+            setting_key TEXT PRIMARY KEY,
+            setting_value TEXT NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+    """)
+    marker = "teacher_exam_forum_cleanup_2026_11_21"
+    cur.execute("SELECT setting_value FROM portal_v2_settings WHERE setting_key=%s", (marker,))
+    if cur.fetchone():
+        return
+
+    cur.execute("""
+        SELECT id FROM portal_v2_exams
+        WHERE status='archived'
+          AND title <> %s
+        FOR UPDATE
+    """, ("Tense and Parts of Speech Assessment",))
+    remove_ids = [row["id"] for row in cur.fetchall()]
+    if remove_ids:
+        cur.execute("""
+            DELETE FROM portal_v2_evaluations
+            WHERE attempt_id IN (
+                SELECT id FROM portal_v2_attempts WHERE exam_id = ANY(%s)
+            )
+        """, (remove_ids,))
+        cur.execute("""
+            DELETE FROM portal_v2_answers
+            WHERE attempt_id IN (
+                SELECT id FROM portal_v2_attempts WHERE exam_id = ANY(%s)
+            )
+        """, (remove_ids,))
+        cur.execute("DELETE FROM portal_v2_attempts WHERE exam_id = ANY(%s)", (remove_ids,))
+        cur.execute("""
+            UPDATE portal_v2_exams
+            SET status='deleted', pdf_enabled=FALSE, pdf_cleared_at=now()
+            WHERE id = ANY(%s) AND status='archived'
+        """, (remove_ids,))
+    cur.execute("""
+        INSERT INTO portal_v2_settings (setting_key, setting_value, updated_at)
+        VALUES (%s, %s, now())
+        ON CONFLICT (setting_key) DO NOTHING
+    """, (marker, "completed"))
+
+
 @app.get("/api/teacher/exams")
 def teacher_exam_overview():
     with db() as conn, conn.cursor() as cur:
+        _apply_teacher_exam_visibility_cleanup(cur)
         cur.execute("""
             SELECT e.id, e.title, e.subject, e.status, e.available_from, e.available_until,
                    COUNT(a.id) FILTER (
