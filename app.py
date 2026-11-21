@@ -1438,8 +1438,8 @@ def download_all_student_rankings_pdf():
 
         table = Table(
             table_rows, repeatRows=1,
-            colWidths=[19*mm, 48*mm, 19*mm, 38*mm, 51*mm],
-            rowHeights=[24] + [19.5] * len(rows)
+            colWidths=[17*mm, 45*mm, 18*mm, 37*mm, 43*mm],
+            rowHeights=[22] + [17.5] * len(rows)
         )
         style_commands = [
             ("BACKGROUND", (0, 0), (-1, 0), pale_blue),
