@@ -1374,7 +1374,7 @@ def download_all_student_rankings_pdf():
         c.translate(W/2, H/2-5)
         c.rotate(34)
         try:
-            c.setFillAlpha(.25)
+            c.setFillAlpha(.55)
         except Exception:
             pass
         c.setFillColor(colors.HexColor("#2d619e"))
