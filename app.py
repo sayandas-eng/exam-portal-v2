@@ -56,6 +56,9 @@ def db():
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS availability_days INTEGER NOT NULL DEFAULT 3")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_until TIMESTAMPTZ")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_from TIMESTAMPTZ")
+        # Stable keys make exam creation safe to retry after transient throttling.
+        conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS idempotency_key TEXT")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS portal_v2_exams_idempotency_key_uidx ON portal_v2_exams (idempotency_key) WHERE idempotency_key IS NOT NULL")
         conn.execute("ALTER TABLE portal_v2_exams DROP CONSTRAINT IF EXISTS portal_v2_exams_status_check")
         conn.execute("""
             ALTER TABLE portal_v2_exams
@@ -352,6 +355,9 @@ def create_exam():
     if not admin_required():
         return error("Admin authentication required", 401)
     data = request.get_json(silent=True) or {}
+    idempotency_key = request.headers.get("Idempotency-Key", "").strip() or None
+    if idempotency_key and len(idempotency_key) > 200:
+        return error("Idempotency-Key must be 200 characters or fewer")
     required = ["title", "subject", "topic", "duration_minutes", "questions"]
     if any(k not in data for k in required):
         return error("Required fields: title, subject, topic, duration_minutes, questions")
@@ -388,15 +394,30 @@ def create_exam():
             except (TypeError, ValueError):
                 return error("Use valid ISO 8601 availability timestamps with timezone offsets.")
         with db() as conn, conn.cursor() as cur:
+            if idempotency_key:
+                # Serialize duplicate requests across workers before checking/inserting.
+                cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (idempotency_key,))
+                cur.execute("""
+                    SELECT e.id, e.status, COUNT(q.id)::int AS question_count, e.total_marks
+                    FROM portal_v2_exams e
+                    LEFT JOIN portal_v2_questions q ON q.exam_id=e.id
+                    WHERE e.idempotency_key=%s
+                    GROUP BY e.id
+                """, (idempotency_key,))
+                existing = cur.fetchone()
+                if existing:
+                    return jsonify({"ok": True, "exam_id": existing["id"], "status": existing["status"],
+                                    "question_count": existing["question_count"], "total_marks": existing["total_marks"],
+                                    "idempotent_replay": True}), 200
             cur.execute("""
                 INSERT INTO portal_v2_exams
                 (id, title, subject, target_class, topic, difficulty, status,
                  exam_password_hash, duration_minutes, review_minutes, total_marks, availability_days,
-                 available_from, available_until)
-                VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s)
+                 available_from, available_until, idempotency_key)
+                VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s)
             """, (exam_id, data["title"], data["subject"], data.get("target_class"),
                   data["topic"], data.get("difficulty", "moderate"), password_hash,
-                  duration, review, total, availability_days, availability_start, availability_end))
+                  duration, review, total, availability_days, availability_start, availability_end, idempotency_key))
             for index, q in enumerate(questions, start=1):
                 qtype = q.get("question_type", "mcq")
                 if qtype not in ("mcq", "saq"):
@@ -431,8 +452,13 @@ def publish_exam(exam_id):
         cur.execute("SELECT COUNT(*) AS n FROM portal_v2_questions WHERE exam_id=%s", (exam_id,))
         if cur.fetchone()["n"] == 0:
             return error("An exam must contain questions before publishing")
-        cur.execute("SELECT exam_password_hash, availability_days, available_from, available_until FROM portal_v2_exams WHERE id=%s", (exam_id,))
+        cur.execute("SELECT exam_password_hash, availability_days, available_from, available_until, status FROM portal_v2_exams WHERE id=%s", (exam_id,))
         password_row = cur.fetchone()
+        if password_row and password_row["status"] == "live":
+            return jsonify({"ok": True, "exam_id": exam_id, "status": "live",
+                            "available_from": password_row["available_from"],
+                            "available_until": password_row["available_until"],
+                            "idempotent_replay": True})
         if not password_row or not password_row["exam_password_hash"]:
             return error("The fixed student password is not configured for this exam", 500)
         now = datetime.now(timezone.utc)

@@ -11,6 +11,8 @@ import json
 import re
 import secrets
 import time
+import uuid
+import random
 from typing import Any
 
 import requests
@@ -319,14 +321,33 @@ async def login_post(request: Request) -> Response:
     return await provider.login_callback(request)
 
 def portal_call(method: str, path: str, **kwargs):
-    response = requests.request(
-        method, BASE + path,
-        headers={"X-Admin-Key": API_TOKEN},
-        timeout=90, **kwargs,
-    )
-    if not response.ok:
-        raise RuntimeError(f"Exam Portal V2 returned HTTP {response.status_code}: {response.text[:1200]}")
-    return response.json()
+    """Retry transient upstream throttling/outages with bounded exponential backoff."""
+    headers = {"X-Admin-Key": API_TOKEN}
+    headers.update(kwargs.pop("headers", {}) or {})
+    for attempt in range(5):
+        try:
+            response = requests.request(method, BASE + path, headers=headers, timeout=90, **kwargs)
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            if attempt == 4:
+                raise RuntimeError(f"Exam Portal V2 request failed after retries: {exc}") from exc
+            time.sleep(min(2 ** attempt, 16) + random.uniform(0, 0.5))
+            continue
+        if response.status_code in (429, 500, 502, 503, 504):
+            if attempt == 4:
+                raise RuntimeError(
+                    f"Exam Portal V2 remained unavailable after retries (HTTP {response.status_code}): "
+                    f"{response.text[:1200]}"
+                )
+            try:
+                retry_after = max(0.0, float(response.headers.get("Retry-After", "0")))
+            except (TypeError, ValueError):
+                retry_after = 0.0
+            time.sleep(min(max(retry_after, 2 ** attempt), 60) + random.uniform(0, 0.5))
+            continue
+        if not response.ok:
+            raise RuntimeError(f"Exam Portal V2 returned HTTP {response.status_code}: {response.text[:1200]}")
+        return response.json()
+    raise RuntimeError("Exam Portal V2 request failed after retries.")
 
 def normalize_class(value: str) -> str | None:
     value = str(value or "").strip()
@@ -420,7 +441,8 @@ def create_and_publish_exam(
                 correct_option = "ABCD"[matches[0]]
             q.update({"options": options, "correct_option": correct_option})
         questions.append(q)
-    created = portal_call("POST", "/api/admin/exams", json={
+    create_idempotency_key = str(uuid.uuid4())
+    created = portal_call("POST", "/api/admin/exams", headers={"Idempotency-Key": create_idempotency_key}, json={
         "title": title, "subject": subject, "topic": topic,
         "target_class": normalized_class, "difficulty": difficulty,
         "duration_minutes": int(duration_minutes), "review_minutes": int(review_minutes),
