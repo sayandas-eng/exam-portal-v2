@@ -310,7 +310,20 @@ async def root_info(request: Request) -> Response:
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health(request: Request) -> Response:
-    return JSONResponse({"ok": True, "service": "exam-portal-v2-gemini-mcp"})
+    try:
+        # Exercise the same authenticated local Flask API used by exam publishing.
+        portal_call("GET", "/api/admin/exams")
+        return JSONResponse({
+            "ok": True,
+            "service": "exam-portal-v2-gemini-mcp",
+            "portal_api": "connected_in_process",
+        })
+    except Exception:
+        return JSONResponse({
+            "ok": False,
+            "service": "exam-portal-v2-gemini-mcp",
+            "portal_api": "unavailable",
+        }, status_code=503)
 
 @mcp.custom_route("/login", methods=["GET"])
 async def login_page(request: Request) -> Response:
@@ -320,55 +333,49 @@ async def login_page(request: Request) -> Response:
 async def login_post(request: Request) -> Response:
     return await provider.login_callback(request)
 
+_PORTAL_FLASK_CLIENT = None
+
 def portal_call(method: str, path: str, **kwargs):
-    """Retry transient upstream throttling/outages with bounded exponential backoff."""
+    """Invoke the existing Flask portal API in-process.
+
+    Both services are built from this repository and share DATABASE_URL.
+    Using Flask's test client dispatches the real route handlers directly,
+    preserving validation/authentication/database behavior while avoiding
+    the public Render hostname and its Cloudflare edge challenge.
+    """
+    global _PORTAL_FLASK_CLIENT
+    if _PORTAL_FLASK_CLIENT is None:
+        # Import lazily so MCP OAuth can initialize independently. The portal
+        # module reads the same DATABASE_URL and accepts MCP_API_TOKEN for
+        # authenticated admin API calls.
+        from app import app as portal_flask_app
+        _PORTAL_FLASK_CLIENT = portal_flask_app.test_client()
+
     headers = {"X-Admin-Key": API_TOKEN}
     headers.update(kwargs.pop("headers", {}) or {})
-    for attempt in range(5):
-        try:
-            response = requests.request(method, BASE + path, headers=headers, timeout=90, **kwargs)
-        except (requests.Timeout, requests.ConnectionError) as exc:
-            if attempt == 4:
-                raise RuntimeError(f"Exam Portal V2 request failed after retries: {exc}") from exc
-            time.sleep(min(2 ** attempt, 16) + random.uniform(0, 0.5))
-            continue
-        # Cloudflare browser challenges are HTML interstitials, not API throttling.
-        # Retrying them only repeats the block; surface the exact upstream signal.
-        content_type = response.headers.get("Content-Type", "").lower()
-        body_prefix = response.text[:3000].lower()
-        is_cloudflare_challenge = (
-            "text/html" in content_type
-            and (
-                "just a moment" in body_prefix
-                or "cf-chl-" in body_prefix
-                or "challenge-platform" in body_prefix
-                or response.headers.get("cf-mitigated", "").lower() == "challenge"
-            )
+    response = _PORTAL_FLASK_CLIENT.open(
+        path,
+        method=method.upper(),
+        headers=headers,
+        **kwargs,
+    )
+    payload = response.get_json(silent=True)
+    if not response.status_code < 400:
+        detail = ""
+        if isinstance(payload, dict):
+            detail = str(payload.get("error", ""))
+        if not detail:
+            detail = response.get_data(as_text=True)[:1200]
+        raise RuntimeError(
+            f"Exam Portal V2 local API returned HTTP {response.status_code}: {detail}"
         )
-        if is_cloudflare_challenge:
-            ray = response.headers.get("CF-Ray", "unavailable")
-            raise RuntimeError(
-                "Exam Portal V2 is returning a Cloudflare browser challenge "
-                f"(HTTP {response.status_code}, CF-Ray {ray}) instead of JSON. "
-                "Use the direct Render origin URL for PORTAL_BASE_URL or allow the MCP service "
-                "through the Cloudflare security rule for the admin API."
-            )
-        if response.status_code in (429, 500, 502, 503, 504):
-            if attempt == 4:
-                raise RuntimeError(
-                    f"Exam Portal V2 remained unavailable after retries (HTTP {response.status_code}): "
-                    f"{response.text[:1200]}"
-                )
-            try:
-                retry_after = max(0.0, float(response.headers.get("Retry-After", "0")))
-            except (TypeError, ValueError):
-                retry_after = 0.0
-            time.sleep(min(max(retry_after, 2 ** attempt), 60) + random.uniform(0, 0.5))
-            continue
-        if not response.ok:
-            raise RuntimeError(f"Exam Portal V2 returned HTTP {response.status_code}: {response.text[:1200]}")
-        return response.json()
-    raise RuntimeError("Exam Portal V2 request failed after retries.")
+    if payload is None:
+        raise RuntimeError(
+            "Exam Portal V2 local API returned a non-JSON response "
+            f"(HTTP {response.status_code})."
+        )
+    return payload
+
 
 def normalize_class(value: str) -> str | None:
     value = str(value or "").strip()
