@@ -332,6 +332,27 @@ def portal_call(method: str, path: str, **kwargs):
                 raise RuntimeError(f"Exam Portal V2 request failed after retries: {exc}") from exc
             time.sleep(min(2 ** attempt, 16) + random.uniform(0, 0.5))
             continue
+        # Cloudflare browser challenges are HTML interstitials, not API throttling.
+        # Retrying them only repeats the block; surface the exact upstream signal.
+        content_type = response.headers.get("Content-Type", "").lower()
+        body_prefix = response.text[:3000].lower()
+        is_cloudflare_challenge = (
+            "text/html" in content_type
+            and (
+                "just a moment" in body_prefix
+                or "cf-chl-" in body_prefix
+                or "challenge-platform" in body_prefix
+                or response.headers.get("cf-mitigated", "").lower() == "challenge"
+            )
+        )
+        if is_cloudflare_challenge:
+            ray = response.headers.get("CF-Ray", "unavailable")
+            raise RuntimeError(
+                "Exam Portal V2 is returning a Cloudflare browser challenge "
+                f"(HTTP {response.status_code}, CF-Ray {ray}) instead of JSON. "
+                "Use the direct Render origin URL for PORTAL_BASE_URL or allow the MCP service "
+                "through the Cloudflare security rule for the admin API."
+            )
         if response.status_code in (429, 500, 502, 503, 504):
             if attempt == 4:
                 raise RuntimeError(
