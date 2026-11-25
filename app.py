@@ -1079,9 +1079,39 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
 
         # Overall result medal and grade-calculation table.
         draw_round(c, 48, 720, 458, 340, 28, navy, navy, 1)
-        draw_text(c, 277, 800, "♧", 42, gold_light, "Helvetica", "center")
+        # Open-book emblem above the heading.
+        c.setStrokeColor(gold_light); c.setLineWidth(3 * sx)
+        c.line(px(277), py(777), px(277), py(798))
+        c.line(px(277), py(777), px(260), py(771))
+        c.line(px(260), py(771), px(248), py(773))
+        c.line(px(248), py(773), px(248), py(793))
+        c.line(px(248), py(793), px(277), py(800))
+        c.line(px(277), py(777), px(294), py(771))
+        c.line(px(294), py(771), px(306), py(773))
+        c.line(px(306), py(773), px(306), py(793))
+        c.line(px(306), py(793), px(277), py(800))
         draw_text(c, 277, 843, "O V E R A L L   R E S U L T",
                   22, pale, "Helvetica-Bold", "center")
+        # Laurel wreath around the medal, drawn as individual gold leaves.
+        for side in (-1, 1):
+            for i in range(9):
+                yy = 1007 - i * 18
+                xx = 277 + side * (145 - abs(4-i) * 3)
+                c.saveState()
+                c.translate(px(xx), py(yy))
+                c.rotate(side * (32 + i * 5))
+                c.setFillColor(gold_light)
+                c.ellipse(-px(5), -px(10), px(5), px(10), fill=1, stroke=0)
+                c.restoreState()
+        # Gold medal ribbon.
+        p = c.beginPath()
+        p.moveTo(px(239), py(1000)); p.lineTo(px(270), py(1000))
+        p.lineTo(px(263), py(1050)); p.lineTo(px(240), py(1037)); p.close()
+        c.setFillColor(gold); c.drawPath(p, fill=1, stroke=0)
+        p = c.beginPath()
+        p.moveTo(px(284), py(1000)); p.lineTo(px(315), py(1000))
+        p.lineTo(px(314), py(1037)); p.lineTo(px(291), py(1050)); p.close()
+        c.setFillColor(gold_light); c.drawPath(p, fill=1, stroke=0)
         c.setStrokeColor(gold_light); c.setLineWidth(14 * sx)
         c.circle(px(277), py(933), px(112), stroke=1, fill=0)
         draw_text(c, 277, 938, f"{percentage:.1f}%", 46, pale, "Times-Bold", "center")
