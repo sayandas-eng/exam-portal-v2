@@ -340,7 +340,10 @@ def admin_list_exams():
                    e.total_marks, e.created_at, e.published_at,
                    e.availability_days, e.available_from, e.available_until,
                    COUNT(q.id)::int AS question_count,
-                   (SELECT COUNT(*)::int
+                   (SELECT COUNT(DISTINCT (
+                                lower(btrim(a.student_name)),
+                                lower(btrim(a.student_class))
+                            ))::int
                     FROM portal_v2_attempts a
                     WHERE a.exam_id=e.id
                       AND a.status IN ('submitted', 'evaluated')
