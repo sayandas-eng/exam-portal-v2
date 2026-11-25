@@ -1037,6 +1037,12 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         draw_text(c, 242, 198,
             "MADHYAMIK   •   HIGHER SECONDARY   •   GHATAL, PASCHIM MEDINIPUR",
             17, pale, "Helvetica", max_width=735)
+        # Fixed AI sparkle mark, drawn as vector lines to avoid font glyph issues.
+        c.setStrokeColor(pale); c.setLineWidth(2.2 * sx)
+        for cx, cy, radius in ((944, 34, 10), (965, 23, 5)):
+            c.line(px(cx-radius), py(cy), px(cx+radius), py(cy))
+            c.line(px(cx), py(cy-radius), px(cx), py(cy+radius))
+        draw_text(c, 990, 57, "AI", 25, pale, "Helvetica-Bold", "right")
 
         draw_text(c, 512, 354, "R E S U L T   S H E E T", 45, ink, "Times-Bold", "center")
         draw_line(c, 50, 355, 265, 355, gold, 2)
@@ -1214,18 +1220,82 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
                          leftMargin=42, rightMargin=42, topMargin=42, bottomMargin=42)
     cover_frame = Frame(42, 42, page_w - 84, page_h - 84, id="cover_frame",
                         leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
-    question_frame = Frame(42, 42, page_w - 84, page_h - 84, id="question_frame",
-                           leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
+    # Reserve the full branded header and footer areas on every answer-review page.
+    question_frame = Frame(
+        42, 76, page_w - 84, page_h - 184 - 76, id="question_frame",
+        leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0
+    )
 
     def cover_page(c, d):
         draw_cover(c, d)
 
-    def question_page(c, d):
+    def draw_question_brand_frame(c):
+        """Static AS English letterhead/footer repeated on every question page."""
         c.saveState()
-        c.setFillColor(HexColor("#64748b"))
-        c.setFont("Helvetica-Bold", 8)
-        c.drawRightString(page_w - 42, 22, "Abhishek Santra English Guidance")
+        draw_rect(c, 0, 0, ref_w, ref_h, cream)
+
+        # Header: navy panel, gold wave, fixed AS emblem and institute identity.
+        p = c.beginPath()
+        p.moveTo(px(0), py(0)); p.lineTo(px(ref_w), py(0))
+        p.lineTo(px(ref_w), py(236))
+        p.curveTo(px(820), py(264), px(700), py(224), px(560), py(242))
+        p.curveTo(px(380), py(267), px(180), py(288), px(0), py(240))
+        p.close()
+        c.setFillColor(navy); c.drawPath(p, fill=1, stroke=0)
+        p = c.beginPath()
+        p.moveTo(px(0), py(222))
+        p.curveTo(px(220), py(278), px(350), py(265), px(520), py(238))
+        p.curveTo(px(730), py(207), px(860), py(268), px(1024), py(226))
+        p.lineTo(px(1024), py(253))
+        p.curveTo(px(850), py(292), px(720), py(235), px(520), py(265))
+        p.curveTo(px(330), py(292), px(160), py(306), px(0), py(250))
+        p.close()
+        c.setFillColor(gold_light); c.drawPath(p, fill=1, stroke=0)
+
+        c.setStrokeColor(gold); c.setLineWidth(5 * sx)
+        c.circle(px(108), py(102), px(69), stroke=1, fill=0)
+        draw_text(c, 108, 110, "AS", 43, gold, "Times-Bold", "center")
+        draw_text(c, 108, 137, "ENGLISH", 12, pale, "Helvetica-Bold", "center")
+        draw_line(c, 205, 48, 205, 153, gold, 2)
+        draw_text(c, 256, 57,
+            "E X C E L L E N C E   I N   E N G L I S H   S I N C E   T W O   D E C A D E S   O F   S E R V I C E",
+            13, pale, "Helvetica-Bold", max_width=735)
+        draw_text(c, 240, 117, "Abhishek Santra", 52, pale, "Times-Bold")
+        draw_text(c, 242, 160, "English Guidance", 37, gold_light, "Times-Italic")
+        draw_text(c, 242, 198,
+            "MADHYAMIK   •   HIGHER SECONDARY   •   GHATAL, PASCHIM MEDINIPUR",
+            17, pale, "Helvetica", max_width=735)
+        # Fixed AI sparkle mark, drawn as vector lines to avoid font glyph issues.
+        c.setStrokeColor(pale); c.setLineWidth(2.2 * sx)
+        for cx, cy, radius in ((944, 34, 10), (965, 23, 5)):
+            c.line(px(cx-radius), py(cy), px(cx+radius), py(cy))
+            c.line(px(cx), py(cy-radius), px(cx), py(cy+radius))
+        draw_text(c, 990, 57, "AI", 25, pale, "Helvetica-Bold", "right")
+
+        # Footer: matching gold wave and navy band on every continuation page.
+        p = c.beginPath()
+        p.moveTo(px(0), py(1360))
+        p.curveTo(px(250), py(1390), px(400), py(1344), px(570), py(1350))
+        p.curveTo(px(760), py(1356), px(880), py(1400), px(1024), py(1350))
+        p.lineTo(px(1024), py(1447)); p.lineTo(px(0), py(1447)); p.close()
+        c.setFillColor(navy); c.drawPath(p, fill=1, stroke=0)
+        p = c.beginPath()
+        p.moveTo(px(0), py(1344))
+        p.curveTo(px(220), py(1380), px(400), py(1334), px(570), py(1338))
+        p.curveTo(px(770), py(1345), px(890), py(1383), px(1024), py(1337))
+        p.lineTo(px(1024), py(1364))
+        p.curveTo(px(850), py(1410), px(730), py(1362), px(570), py(1363))
+        p.curveTo(px(360), py(1356), px(190), py(1412), px(0), py(1370))
+        p.close()
+        c.setFillColor(gold_light); c.drawPath(p, fill=1, stroke=0)
+        draw_text(c, 64, 1409, "“Learn the language. Own the future.”",
+                  20, gold_light, "Times-Italic")
+        draw_text(c, 960, 1409, "Ghatal, Paschim Medinipur",
+                  18, pale, "Helvetica", "right")
         c.restoreState()
+
+    def question_page(c, d):
+        draw_question_brand_frame(c)
 
     doc.addPageTemplates([
         PageTemplate(id="Cover", frames=cover_frame, onPage=cover_page,
