@@ -41,11 +41,11 @@
     $("#exam-count").textContent = filtered.length + (filtered.length === 1 ? " running examination" : " running examinations");
     const body = $("#exam-table-body");
     if (!adminConnected) {
-      body.innerHTML = '<tr><td colspan="7" class="empty-cell"><div class="empty-state"><span class="empty-icon">⌑</span><strong>Connect your admin account</strong><p>Enter your admin access key above to load your examinations.</p></div></td></tr>';
+      body.innerHTML = '<tr><td colspan="8" class="empty-cell"><div class="empty-state"><span class="empty-icon">⌑</span><strong>Connect your admin account</strong><p>Enter your admin access key above to load your examinations.</p></div></td></tr>';
       return;
     }
     if (!filtered.length) {
-      body.innerHTML = '<tr><td colspan="7" class="empty-cell"><div class="empty-state"><span class="empty-icon">▤</span><strong>No examinations found</strong><p>Create your first exam or adjust your search.</p></div></td></tr>';
+      body.innerHTML = '<tr><td colspan="8" class="empty-cell"><div class="empty-state"><span class="empty-icon">▤</span><strong>No examinations found</strong><p>Create your first exam or adjust your search.</p></div></td></tr>';
       return;
     }
     body.innerHTML = filtered.map(e => {
