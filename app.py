@@ -1764,7 +1764,8 @@ def download_all_student_rankings_pdf():
         _auto_evaluate_pending_attempts(cur)
         cur.execute("""
             SELECT e.id AS exam_id, e.title AS exam_title, e.target_class,
-                   e.total_marks, a.student_name, a.student_class, a.submitted_at,
+                   e.total_marks, e.published_at,
+                   a.student_name, a.student_class, a.submitted_at,
                    COALESCE(SUM(ev.final_marks), 0)::float AS obtained_marks
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
@@ -1777,18 +1778,28 @@ def download_all_student_rankings_pdf():
             ORDER BY e.title ASC, obtained_marks DESC, a.submitted_at ASC NULLS LAST, a.student_name ASC
         """, (request.args.get("exam_id") or None, request.args.get("exam_id") or None))
         records = cur.fetchall()
+        exam_ids = list(dict.fromkeys(str(row["exam_id"]) for row in records))
+        questions_by_exam = {}
+        for exam_id in exam_ids:
+            cur.execute("""
+                SELECT position, question_type, prompt, options,
+                       correct_option, expected_answer, marks
+                FROM portal_v2_questions
+                WHERE exam_id=%s
+                ORDER BY position
+            """, (exam_id,))
+            questions_by_exam[exam_id] = cur.fetchall()
 
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
     from reportlab.pdfgen import canvas as pdf_canvas
     from reportlab.pdfbase.pdfmetrics import stringWidth
     from xml.sax.saxutils import escape
-    import unicodedata
+    import unicodedata, json
 
     W, H = A4
     navy = colors.HexColor("#12396d")
     blue = colors.HexColor("#2362aa")
-    mid_blue = colors.HexColor("#6e9bd3")
     pale_blue = colors.HexColor("#cfe2fb")
     grid_blue = colors.HexColor("#7f9fc9")
     pdf_text = lambda value: unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
@@ -1806,154 +1817,184 @@ def download_all_student_rankings_pdf():
 
     def draw_book(cx, cy, scale=1):
         c.saveState()
-        c.setFillColor(navy)
-        c.setStrokeColor(navy)
-        c.setLineWidth(1.5*scale)
-        # Two open pages and a central spine, matching the reference logo.
-        p = c.beginPath()
-        p.moveTo(cx, cy-8*scale); p.curveTo(cx-9*scale, cy-2*scale, cx-18*scale, cy+5*scale, cx-29*scale, cy+3*scale)
-        p.lineTo(cx-29*scale, cy+24*scale); p.curveTo(cx-17*scale, cy+27*scale, cx-8*scale, cy+20*scale, cx, cy+15*scale); p.close()
-        c.drawPath(p, fill=1, stroke=0)
-        p = c.beginPath()
-        p.moveTo(cx, cy-8*scale); p.curveTo(cx+9*scale, cy-2*scale, cx+18*scale, cy+5*scale, cx+29*scale, cy+3*scale)
-        p.lineTo(cx+29*scale, cy+24*scale); p.curveTo(cx+17*scale, cy+27*scale, cx+8*scale, cy+20*scale, cx, cy+15*scale); p.close()
-        c.drawPath(p, fill=1, stroke=0)
-        c.setStrokeColor(colors.white)
-        c.setLineWidth(1.1*scale)
-        c.line(cx, cy-5*scale, cx, cy+18*scale)
+        c.setFillColor(navy); c.setStrokeColor(navy); c.setLineWidth(1.5*scale)
+        p=c.beginPath(); p.moveTo(cx,cy-8*scale)
+        p.curveTo(cx-9*scale,cy-2*scale,cx-18*scale,cy+5*scale,cx-29*scale,cy+3*scale)
+        p.lineTo(cx-29*scale,cy+24*scale)
+        p.curveTo(cx-17*scale,cy+27*scale,cx-8*scale,cy+20*scale,cx,cy+15*scale); p.close()
+        c.drawPath(p,fill=1,stroke=0)
+        p=c.beginPath(); p.moveTo(cx,cy-8*scale)
+        p.curveTo(cx+9*scale,cy-2*scale,cx+18*scale,cy+5*scale,cx+29*scale,cy+3*scale)
+        p.lineTo(cx+29*scale,cy+24*scale)
+        p.curveTo(cx+17*scale,cy+27*scale,cx+8*scale,cy+20*scale,cx,cy+15*scale); p.close()
+        c.drawPath(p,fill=1,stroke=0)
+        c.setStrokeColor(colors.white); c.setLineWidth(1.1*scale); c.line(cx,cy-5*scale,cx,cy+18*scale)
         c.restoreState()
 
     def draw_cap(cx, cy, scale=1):
-        c.saveState()
-        c.setFillColor(navy)
-        p=c.beginPath()
-        p.moveTo(cx-18*scale,cy+3*scale); p.lineTo(cx,cy+12*scale); p.lineTo(cx+18*scale,cy+3*scale); p.lineTo(cx,cy-5*scale); p.close()
-        c.drawPath(p,fill=1,stroke=0)
-        c.setFillColor(navy)
-        c.rect(cx-10*scale,cy-8*scale,20*scale,4*scale,fill=1,stroke=0)
+        c.saveState(); c.setFillColor(navy)
+        p=c.beginPath(); p.moveTo(cx-18*scale,cy+3*scale); p.lineTo(cx,cy+12*scale)
+        p.lineTo(cx+18*scale,cy+3*scale); p.lineTo(cx,cy-5*scale); p.close()
+        c.drawPath(p,fill=1,stroke=0); c.rect(cx-10*scale,cy-8*scale,20*scale,4*scale,fill=1,stroke=0)
         c.setStrokeColor(navy); c.setLineWidth(1.2*scale)
-        c.line(cx+14*scale,cy+4*scale,cx+17*scale,cy-8*scale)
-        c.circle(cx+17*scale,cy-10*scale,1.7*scale,fill=1,stroke=0)
+        c.line(cx+14*scale,cy+4*scale,cx+17*scale,cy-8*scale); c.circle(cx+17*scale,cy-10*scale,1.7*scale,fill=1,stroke=0)
         c.restoreState()
 
     def draw_watermark():
-        c.saveState()
-        c.translate(W/2, H/2-5)
-        c.rotate(34)
-        try:
-            c.setFillAlpha(.008)
-        except Exception:
-            pass
-        c.setFillColor(colors.HexColor("#c8d8e8"))
-        c.setFont("Times-Bold", 35)
-        c.drawCentredString(0, 0, "Abhishek Santra English Guidance")
-        c.restoreState()
+        c.saveState(); c.translate(W/2,H/2-5); c.rotate(34)
+        try: c.setFillAlpha(.008)
+        except Exception: pass
+        c.setFillColor(colors.HexColor("#c8d8e8")); c.setFont("Times-Bold",35)
+        c.drawCentredString(0,0,"Abhishek Santra English Guidance"); c.restoreState()
 
-    def draw_page_header(exam_title):
-        # Pale corner ribbons and white page, matching the supplied portrait sheet.
+    def draw_page_frame():
         c.setFillColor(colors.HexColor("#f9fbff")); c.rect(0,0,W,H,fill=1,stroke=0)
-        c.saveState()
-        c.setStrokeColor(colors.HexColor("#a9c9f1")); c.setLineWidth(8)
-        p=c.beginPath(); p.moveTo(0,H-76); p.curveTo(28,H-45,62,H-20,112,H); c.drawPath(p,stroke=1,fill=0)
-        p=c.beginPath(); p.moveTo(W,H-76); p.curveTo(W-28,H-45,W-62,H-20,W-112,H); c.drawPath(p,stroke=1,fill=0)
-        p=c.beginPath(); p.moveTo(0,76); p.curveTo(28,45,62,20,112,0); c.drawPath(p,stroke=1,fill=0)
-        p=c.beginPath(); p.moveTo(W,76); p.curveTo(W-28,45,W-62,20,W-112,0); c.drawPath(p,stroke=1,fill=0)
+        c.saveState(); c.setStrokeColor(colors.HexColor("#a9c9f1")); c.setLineWidth(8)
+        for p in [
+            ((0,H-76),(28,H-45),(62,H-20),(112,H)),
+            ((W,H-76),(W-28,H-45),(W-62,H-20),(W-112,H)),
+            ((0,76),(28,45),(62,20),(112,0)),
+            ((W,76),(W-28,45),(W-62,20),(W-112,0))
+        ]:
+            path=c.beginPath(); path.moveTo(*p[0]); path.curveTo(*p[1],*p[2],*p[3]); c.drawPath(path,stroke=1,fill=0)
         c.setStrokeColor(colors.HexColor("#d1e2f8")); c.setLineWidth(3)
-        p=c.beginPath(); p.moveTo(0,H-92); p.curveTo(38,H-55,75,H-25,125,H); c.drawPath(p,stroke=1,fill=0)
-        p=c.beginPath(); p.moveTo(W,H-92); p.curveTo(W-38,H-55,W-75,H-25,W-125,H); c.drawPath(p,stroke=1,fill=0)
         c.restoreState()
-
         draw_book(103,H-42,.72)
-        c.setFillColor(navy); c.setFont("Times-Bold",25)
-        c.drawString(146,H-34,"Abhishek Santra English Guidance")
-        c.setStrokeColor(blue); c.setLineWidth(1.1)
-        c.line(146,H-46, W-28,H-46)
+        c.setFillColor(navy); c.setFont("Times-Bold",25); c.drawString(146,H-34,"Abhishek Santra English Guidance")
+        c.setStrokeColor(blue); c.setLineWidth(1.1); c.line(146,H-46,W-28,H-46)
         draw_cap(W/2,H-55,.72)
-
-        # Blue pill title and thin frame with a deliberate gap behind the title.
         c.setFillColor(blue); c.roundRect(W/2-110,H-101,220,31,16,fill=1,stroke=0)
         centered_fit("Exam Ranking",W/2,H-91,205,"Times-Bold",19,colors.white)
-        c.setStrokeColor(grid_blue); c.setLineWidth(1)
-        c.roundRect(13,15,W-26,H-119,10,fill=0,stroke=1)
-        c.line(13,H-108,W/2-120,H-108)
-        c.line(W/2+120,H-108,W-13,H-108)
+        c.setStrokeColor(grid_blue); c.setLineWidth(1); c.roundRect(13,15,W-26,H-119,10,fill=0,stroke=1)
+        c.line(13,H-108,W/2-120,H-108); c.line(W/2+120,H-108,W-13,H-108)
+
+    def draw_exam_header(exam_title, published_at):
+        draw_page_frame()
         if exam_title:
             centered_fit(exam_title,W/2,H-126,W-80,"Helvetica-Bold",8.5,navy)
+        if published_at:
+            if published_at.tzinfo is None: published_at=published_at.replace(tzinfo=timezone.utc)
+            live_date=published_at.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y")
+            centered_fit("Date of Live: "+live_date,W/2,H-140,W-80,"Helvetica",8,navy)
 
-    # Column positions mirror the five-column reference grid.
-    x0=23; x1=90; x2=245; x3=305; x4=420; x5=W-23
-    table_top=H-157
-    header_h=25
-    row_h=19.35
-    rows_per_page=30
+    def draw_question_header(exam_title):
+        draw_page_frame()
+        centered_fit("QUESTION PAPER & CORRECT ANSWERS",W/2,H-126,W-80,"Helvetica-Bold",11,navy)
+        centered_fit(exam_title,W/2,H-143,W-80,"Helvetica",8.5,navy)
+
+    # Six columns: rank, name, class, marks, percentage, submission time.
+    x0,x1,x2,x3,x4,x5,x6=23,76,178,230,322,393,W-23
+    table_top=H-166; header_h=25; row_h=19.35; rows_per_page=30
     grouped={}
-    for row in records:
-        grouped.setdefault(str(row["exam_id"]),[]).append(row)
+    for row in records: grouped.setdefault(str(row["exam_id"]),[]).append(row)
 
     if not grouped:
-        draw_page_header("")
+        draw_exam_header("",None)
         c.setFillColor(navy); c.setFont("Helvetica",11)
         c.drawCentredString(W/2,H/2,"No submitted student results are available yet.")
-        draw_watermark()
-        c.showPage()
+        draw_watermark(); c.showPage()
 
     for exam_id, rows in grouped.items():
         chunks=[rows[i:i+rows_per_page] for i in range(0,len(rows),rows_per_page)] or [[]]
-        for chunk_index, chunk in enumerate(chunks):
-            exam_title=pdf_text(chunk[0]["exam_title"] if chunk else "")
-            draw_page_header(exam_title)
-            top=table_top
-            # Keep the watermark behind every table fill and text so it never obscures results.
-            draw_watermark()
-            # Header cells.
-            c.setFillColor(pale_blue); c.roundRect(x0,top-header_h,x5-x0,header_h,6,fill=1,stroke=0)
-            c.setFillColor(navy); c.setFont("Helvetica-Bold",9)
-            c.drawCentredString((x0+x1)/2,top-16,"Rank")
-            c.drawCentredString((x1+x2)/2,top-16,"Name")
-            c.drawCentredString((x2+x3)/2,top-16,"Class")
-            c.drawCentredString((x3+x4)/2,top-16,"Obtained / Total")
-            c.drawCentredString((x4+x5)/2,top-16,"Submission Time")
-
+        for chunk_index,chunk in enumerate(chunks):
+            first=chunk[0] if chunk else None
+            exam_title=pdf_text(first["exam_title"] if first else "")
+            published_at=first["published_at"] if first else None
+            draw_exam_header(exam_title,published_at)
+            top=table_top; draw_watermark()
+            c.setFillColor(pale_blue); c.roundRect(x0,top-header_h,x6-x0,header_h,6,fill=1,stroke=0)
+            c.setFillColor(navy); c.setFont("Helvetica-Bold",8)
+            headers=[(x0,x1,"Rank"),(x1,x2,"Name"),(x2,x3,"Class"),
+                     (x3,x4,"Obtained / Total"),(x4,x5,"Percentage"),(x5,x6,"Submission Time")]
+            for left,right,label in headers: c.drawCentredString((left+right)/2,top-16,label)
             for idx,row in enumerate(chunk):
-                y_top=top-header_h-idx*row_h
-                y_bottom=y_top-row_h
-                global_rank=chunk_index*rows_per_page+idx+1
-                # Rounded highlight bands for the first three ranks.
+                y_top=top-header_h-idx*row_h; y_bottom=y_top-row_h
+                rank=chunk_index*rows_per_page+idx+1
                 medal=[colors.HexColor("#ffe7a6"),colors.HexColor("#e5e8ee"),colors.HexColor("#f7d9c3")]
-                if global_rank<=3:
-                    c.setFillColor(medal[global_rank-1])
-                    c.roundRect(x0+1,y_bottom+1,x5-x0-2,row_h-2,7,fill=1,stroke=0)
-                c.setFillColor(colors.HexColor("#101828")); c.setFont("Helvetica-Bold" if global_rank<=3 else "Helvetica",10)
-                c.drawCentredString((x0+x1)/2,y_bottom+6.2,str(global_rank))
-                name=pdf_text(row["student_name"])
-                centered_fit(name,(x1+x2)/2,y_bottom+6.2,x2-x1-12,"Helvetica-Bold",9.5,colors.HexColor("#101828"))
-                centered_fit(pdf_text(row["student_class"]),(x2+x3)/2,y_bottom+6.2,x3-x2-8,"Helvetica",9.5,colors.HexColor("#101828"))
-                obtained=float(row["obtained_marks"] or 0)
-                total=float(row["total_marks"] or 0)
-                c.setFillColor(navy); c.setFont("Helvetica-Bold",10)
+                if rank<=3:
+                    c.setFillColor(medal[rank-1]); c.roundRect(x0+1,y_bottom+1,x6-x0-2,row_h-2,7,fill=1,stroke=0)
+                c.setFillColor(colors.HexColor("#101828")); c.setFont("Helvetica-Bold" if rank<=3 else "Helvetica",9)
+                c.drawCentredString((x0+x1)/2,y_bottom+6.2,str(rank))
+                centered_fit(row["student_name"],(x1+x2)/2,y_bottom+6.2,x2-x1-8,"Helvetica-Bold",8.5,colors.HexColor("#101828"))
+                centered_fit(row["student_class"],(x2+x3)/2,y_bottom+6.2,x3-x2-6,"Helvetica",8.5,colors.HexColor("#101828"))
+                obtained=float(row["obtained_marks"] or 0); total=float(row["total_marks"] or 0)
+                percentage=(obtained/total*100) if total else 0
+                c.setFillColor(navy); c.setFont("Helvetica-Bold",8.5)
                 c.drawCentredString((x3+x4)/2,y_bottom+6.2,f"{obtained:g} / {total:g}")
+                c.drawCentredString((x4+x5)/2,y_bottom+6.2,f"{percentage:.2f}%")
                 submitted=row["submitted_at"]
                 if submitted:
-                    if submitted.tzinfo is None:
-                        submitted=submitted.replace(tzinfo=timezone.utc)
+                    if submitted.tzinfo is None: submitted=submitted.replace(tzinfo=timezone.utc)
                     date_text=submitted.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y, %I:%M %p")
-                else:
-                    date_text=""
-                centered_fit(date_text,(x4+x5)/2,y_bottom+6.2,x5-x4-10,"Helvetica",8.5,colors.HexColor("#101828"))
-
-            # Fine blue table grid, drawn over the watermark like the reference.
+                else: date_text=""
+                centered_fit(date_text,(x5+x6)/2,y_bottom+6.2,x6-x5-8,"Helvetica",7.5,colors.HexColor("#101828"))
             table_bottom=top-header_h-len(chunk)*row_h
-            c.saveState()
-            c.setStrokeColor(grid_blue); c.setLineWidth(.45)
-            for xx in (x0,x1,x2,x3,x4,x5):
-                c.line(xx,table_bottom,xx,top)
-            c.line(x0,top,x5,top)
-            c.line(x0,top-header_h,x5,top-header_h)
-            for ri in range(1,len(chunk)+1):
-                yy=top-header_h-ri*row_h
-                c.line(x0,yy,x5,yy)
-            c.restoreState()
-            c.showPage()
+            c.saveState(); c.setStrokeColor(grid_blue); c.setLineWidth(.45)
+            for xx in (x0,x1,x2,x3,x4,x5,x6): c.line(xx,table_bottom,xx,top)
+            c.line(x0,top,x6,top); c.line(x0,top-header_h,x6,top-header_h)
+            for ri in range(1,len(chunk)+1): c.line(x0,top-header_h-ri*row_h,x6,top-header_h-ri*row_h)
+            c.restoreState(); c.showPage()
+
+        # Question key starts only after every ranking page for this exam.
+        questions=questions_by_exam.get(exam_id,[])
+        if questions:
+            q_per_page=24
+            for q_start in range(0,len(questions),q_per_page):
+                q_chunk=questions[q_start:q_start+q_per_page]
+                draw_question_header(exam_title); draw_watermark()
+                y=H-177
+                c.setFillColor(pale_blue); c.roundRect(27,y-23,W-54,23,5,fill=1,stroke=0)
+                c.setFillColor(navy); c.setFont("Helvetica-Bold",9)
+                c.drawString(38,y-15,"QUESTION"); c.drawString(W-170,y-15,"CORRECT ANSWER")
+                y-=36
+                for qi,q in enumerate(q_chunk,q_start+1):
+                    prompt=pdf_text(q["prompt"])
+                    qtype=str(q["question_type"] or "").lower()
+                    try:
+                        options=q["options"] or []
+                        if isinstance(options,str): options=json.loads(options)
+                    except Exception: options=[]
+                    if isinstance(options,dict): option_items=list(options.items())
+                    elif isinstance(options,list): option_items=[(chr(65+i),v) for i,v in enumerate(options)]
+                    else: option_items=[]
+                    correct=str(q["correct_option"] or "").strip()
+                    if qtype=="mcq":
+                        answer_text=next((str(v) for k,v in option_items if str(k).strip().casefold()==correct.casefold()),"")
+                        answer=(correct+". "+answer_text).strip(". ") if correct else "Not configured"
+                    else:
+                        answer=str(q["expected_answer"] or "No reference answer configured")
+                    prompt_lines=[]
+                    words=prompt.split(); line=""
+                    for word in words:
+                        trial=(line+" "+word).strip()
+                        if stringWidth(trial,"Helvetica-Bold",8.5)>320 and line:
+                            prompt_lines.append(line); line=word
+                        else: line=trial
+                    if line: prompt_lines.append(line)
+                    ans_lines=[]; line=""
+                    for word in pdf_text(answer).split():
+                        trial=(line+" "+word).strip()
+                        if stringWidth(trial,"Helvetica-Bold",8)>145 and line:
+                            ans_lines.append(line); line=word
+                        else: line=trial
+                    if line: ans_lines.append(line)
+                    needed=max(len(prompt_lines),len(ans_lines),1)*11+18
+                    if y-needed<42:
+                        c.showPage(); draw_question_header(exam_title); draw_watermark(); y=H-177
+                    c.setFillColor(navy); c.setFont("Helvetica-Bold",8.5)
+                    c.drawString(35,y,f"Q{qi}.")
+                    for li,line in enumerate(prompt_lines): c.drawString(55,y-li*11,line)
+                    c.setFillColor(colors.HexColor("#16804A")); c.setFont("Helvetica-Bold",8)
+                    for li,line in enumerate(ans_lines): c.drawString(W-170,y-li*11,line)
+                    if option_items and qtype=="mcq":
+                        opts_text="   ".join(f"{k}. {pdf_text(v)}" for k,v in option_items)
+                        c.setFillColor(colors.HexColor("#475569")); c.setFont("Helvetica",7)
+                        c.drawString(55,y-len(prompt_lines)*11-2,opts_text[:150])
+                        needed+=9
+                    c.setStrokeColor(colors.HexColor("#d5dfec")); c.setLineWidth(.4)
+                    c.line(35,y-needed+7,W-35,y-needed+7)
+                    y-=needed
+                c.showPage()
 
     c.save()
     buffer.seek(0)
