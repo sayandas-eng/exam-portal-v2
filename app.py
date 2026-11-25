@@ -1023,10 +1023,11 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         c.setFillColor(gold_light); c.drawPath(p, fill=1, stroke=0)
 
         # AS English identity and header typography.
+        # Fixed AS English emblem, centered consistently on every student's PDF.
         c.setStrokeColor(gold); c.setLineWidth(5 * sx)
-        c.circle(px(108), py(102), px(70), stroke=1, fill=0)
-        draw_text(c, 108, 110, "AS", 42, gold, "Times-Bold", "center")
-        draw_text(c, 108, 137, "ENGLISH", 13, pale, "Helvetica-Bold", "center")
+        c.circle(px(108), py(102), px(69), stroke=1, fill=0)
+        draw_text(c, 108, 110, "AS", 43, gold, "Times-Bold", "center")
+        draw_text(c, 108, 137, "ENGLISH", 12, pale, "Helvetica-Bold", "center")
         draw_line(c, 205, 48, 205, 153, gold, 2)
         draw_text(c, 256, 57,
             "E X C E L L E N C E   I N   E N G L I S H   S I N C E   T W O   D E C A D E S   O F   S E R V I C E",
@@ -1091,45 +1092,58 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         draw_text(c, 756, 651, f"{percentage:.0f}%", 23, ink, "Times-Bold", "center")
         draw_text(c, 911, 651, grade, 23, ink, "Times-Bold", "center")
 
-        # Overall result medal and grade-calculation table.
+        # Overall-result panel with clean spacing between heading and medal.
         draw_round(c, 48, 720, 458, 340, 28, navy, navy, 1)
-        # Open-book emblem above the heading.
+        # Simple open-book emblem.
         c.setStrokeColor(gold_light); c.setLineWidth(3 * sx)
-        c.line(px(277), py(777), px(277), py(798))
-        c.line(px(277), py(777), px(260), py(771))
-        c.line(px(260), py(771), px(248), py(773))
-        c.line(px(248), py(773), px(248), py(793))
-        c.line(px(248), py(793), px(277), py(800))
-        c.line(px(277), py(777), px(294), py(771))
-        c.line(px(294), py(771), px(306), py(773))
-        c.line(px(306), py(773), px(306), py(793))
-        c.line(px(306), py(793), px(277), py(800))
-        draw_text(c, 277, 843, "O V E R A L L   R E S U L T",
-                  22, pale, "Helvetica-Bold", "center")
-        # Compact medal layout: heading sits above the ring, with the
-        # percentage and grade centred inside it. Laurel leaves stay clear
-        # of the ring and within the navy panel.
+        c.line(px(277), py(770), px(277), py(792))
+        c.line(px(277), py(770), px(259), py(764))
+        c.line(px(259), py(764), px(248), py(768))
+        c.line(px(248), py(768), px(248), py(787))
+        c.line(px(248), py(787), px(277), py(795))
+        c.line(px(277), py(770), px(295), py(764))
+        c.line(px(295), py(764), px(306), py(768))
+        c.line(px(306), py(768), px(306), py(787))
+        c.line(px(306), py(787), px(277), py(795))
+        draw_text(c, 277, 826, "O V E R A L L   R E S U L T",
+                  21, pale, "Helvetica-Bold", "center")
+        # Balanced laurel branches, kept outside the percentage ring.
         for side in (-1, 1):
             for i in range(8):
-                yy = 1010 - i * 18
-                xx = 277 + side * (118 + (i % 2) * 5)
+                yy = 1000 - i * 18
+                xx = 277 + side * (130 + i * 2)
                 c.saveState()
                 c.translate(px(xx), py(yy))
                 c.rotate(side * (28 + i * 5))
                 c.setFillColor(gold_light)
-                c.ellipse(-px(5), -px(9), px(5), px(9), fill=1, stroke=0)
+                c.ellipse(-px(4), -px(8), px(4), px(8), fill=1, stroke=0)
                 c.restoreState()
+        # Compact ribbon below the medal.
+        p = c.beginPath()
+        p.moveTo(px(254), py(1008)); p.lineTo(px(276), py(1008))
+        p.lineTo(px(270), py(1042)); p.lineTo(px(252), py(1033)); p.close()
+        c.setFillColor(gold); c.drawPath(p, fill=1, stroke=0)
+        p = c.beginPath()
+        p.moveTo(px(278), py(1008)); p.lineTo(px(300), py(1008))
+        p.lineTo(px(302), py(1033)); p.lineTo(px(284), py(1042)); p.close()
+        c.setFillColor(gold_light); c.drawPath(p, fill=1, stroke=0)
         c.setStrokeColor(gold_light); c.setLineWidth(12 * sx)
-        c.circle(px(277), py(956), px(86), stroke=1, fill=0)
-        draw_text(c, 277, 950, f"{percentage:.1f}%", 42, pale, "Times-Bold", "center")
-        draw_text(c, 277, 985, f"GRADE {grade}", 20, gold_light, "Helvetica-Bold", "center")
+        c.circle(px(277), py(940), px(88), stroke=1, fill=0)
+        draw_text(c, 277, 944, f"{percentage:.1f}%", 42, pale, "Times-Bold", "center")
+        draw_text(c, 277, 976, f"GRADE {grade}", 20, gold_light, "Helvetica-Bold", "center")
 
+        # Grade table is horizontally centered within its outer frame.
         draw_round(c, 522, 744, 454, 315, 26, pale, gold, 2)
         draw_round(c, 565, 718, 390, 55, 25, gold, gold, 1)
         draw_text(c, 760, 755, "GRADE CALCULATION", 22, navy, "Helvetica-Bold", "center")
-        draw_rect(c, 620, 789, 356, 48, navy)
-        draw_text(c, 733, 820, "PERCENTAGE RANGE", 16, pale, "Helvetica-Bold", "center")
-        draw_text(c, 911, 820, "GRADE", 16, pale, "Helvetica-Bold", "center")
+        table_x, table_w = 560, 378
+        split_x = table_x + 240
+        table_right = table_x + table_w
+        draw_round(c, table_x, 789, table_w, 48, 8, navy, navy, 1)
+        draw_rect(c, table_x, 819, table_w, 18, navy)
+        draw_line(c, split_x, 789, split_x, 1047, gold, 1)
+        draw_text(c, table_x + 120, 820, "PERCENTAGE RANGE", 15, pale, "Helvetica-Bold", "center")
+        draw_text(c, split_x + (table_right-split_x)/2, 820, "GRADE", 15, pale, "Helvetica-Bold", "center")
         grade_rows = [
             ("90% – 100%", "A+"), ("80% – 89%", "A"),
             ("70% – 79%", "B+"), ("60% – 69%", "B"),
@@ -1137,13 +1151,13 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
             ("Below 40%", "D")
         ]
         for i, (range_text, grade_text) in enumerate(grade_rows):
-            yy = 837 + i * 31
+            yy = 837 + i * 30
             if i % 2 == 0:
-                draw_rect(c, 620, yy, 356, 31, HexColor("#F7F0DF"))
-            draw_line(c, 620, yy + 31, 976, yy + 31, gold, 1)
-            draw_line(c, 846, yy, 846, yy + 31, gold, 1)
-            draw_text(c, 733, yy + 22, range_text, 17, ink, "Helvetica-Bold", "center")
-            draw_text(c, 911, yy + 22, grade_text, 18, ink, "Helvetica-Bold", "center")
+                draw_rect(c, table_x, yy, table_w, 30, HexColor("#F7F0DF"))
+            draw_line(c, table_x, yy + 30, table_right, yy + 30, gold, 1)
+            draw_text(c, table_x + 120, yy + 21, range_text, 16, ink, "Helvetica-Bold", "center")
+            draw_text(c, split_x + (table_right-split_x)/2, yy + 21,
+                      grade_text, 17, ink, "Helvetica-Bold", "center")
 
         # Teacher remark is deliberately kept as in the supplied template.
         draw_text(c, 50, 1105, "T E A C H E R ' S   R E M A R K S",
