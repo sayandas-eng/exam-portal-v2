@@ -339,7 +339,12 @@ def admin_list_exams():
                    e.difficulty, CASE WHEN e.status='live' AND e.available_until <= now() THEN 'closed' ELSE e.status END AS status, e.duration_minutes, e.review_minutes,
                    e.total_marks, e.created_at, e.published_at,
                    e.availability_days, e.available_from, e.available_until,
-                   COUNT(q.id)::int AS question_count
+                   COUNT(q.id)::int AS question_count,
+                   (SELECT COUNT(*)::int
+                    FROM portal_v2_attempts a
+                    WHERE a.exam_id=e.id
+                      AND a.status IN ('submitted', 'evaluated')
+                      AND a.submitted_at IS NOT NULL) AS submitted_count
             FROM portal_v2_exams e
             LEFT JOIN portal_v2_questions q ON q.exam_id=e.id
             WHERE e.status NOT IN ('archived','deleted')
