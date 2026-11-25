@@ -812,11 +812,212 @@ def submit_attempt(attempt_id):
     return jsonify({"ok": True, "status": "evaluated", "result_released": True, "auto_submitted": expired})
 
 
+def _student_result_attempt(cur, attempt_id):
+    cur.execute("""
+        SELECT a.id, a.status, a.student_name, a.student_class, a.started_at,
+               a.submitted_at, a.evaluated_at, e.title AS exam_title,
+               e.subject, e.total_marks,
+               a.submitted_at + interval '5 minutes' AS result_available_at,
+               a.submitted_at + interval '53 hours' AS result_expires_at,
+               COALESCE((SELECT SUM(ev.final_marks)
+                         FROM portal_v2_evaluations ev
+                         WHERE ev.attempt_id=a.id), 0)::float AS obtained_marks
+        FROM portal_v2_attempts a
+        JOIN portal_v2_exams e ON e.id=a.exam_id
+        WHERE a.id=%s
+          AND lower(btrim(a.student_name)) = lower(btrim(%s))
+          AND lower(btrim(a.student_class)) = lower(btrim(%s))
+    """, (attempt_id, session["student_name"], session["student_class"]))
+    return cur.fetchone()
+
+
+def _student_result_questions(cur, attempt_id):
+    cur.execute("""
+        SELECT q.id AS question_id, q.position, q.question_type, q.prompt,
+               q.options, q.correct_option, q.expected_answer,
+               q.marks AS maximum_marks, ans.answer_text, ans.selected_option,
+               COALESCE(ev.final_marks, ev.ai_marks, 0)::float AS awarded_marks,
+               COALESCE(ev.teacher_feedback, ev.ai_feedback, '') AS feedback
+        FROM portal_v2_questions q
+        JOIN portal_v2_attempts a ON a.exam_id=q.exam_id
+        LEFT JOIN portal_v2_answers ans
+          ON ans.question_id=q.id AND ans.attempt_id=a.id
+        LEFT JOIN portal_v2_evaluations ev
+          ON ev.question_id=q.id AND ev.attempt_id=a.id
+        WHERE a.id=%s
+        ORDER BY q.position
+    """, (attempt_id,))
+    return cur.fetchall()
+
+
+def _student_result_gate(attempt):
+    if not attempt or attempt["status"] not in ("submitted", "evaluated") or not attempt["submitted_at"]:
+        return error("Submitted result not found", 404)
+    now = datetime.now(timezone.utc)
+    available_at = attempt["result_available_at"]
+    expires_at = attempt["result_expires_at"]
+    if now < available_at:
+        return error("Your result will be available five minutes after submission.", 425)
+    if now >= expires_at:
+        return error("The 48-hour student result access period has ended.", 410)
+    return None
+
+
 @app.get("/api/attempts/<attempt_id>/result")
 def attempt_result(attempt_id):
     if not student_required():
         return error("Student sign-in required", 401)
-    return error("Results are not available in the student portal.", 403)
+    with db() as conn, conn.cursor() as cur:
+        attempt = _student_result_attempt(cur, attempt_id)
+        denied = _student_result_gate(attempt)
+        if denied:
+            return denied
+        questions = _student_result_questions(cur, attempt_id)
+    total = float(attempt["total_marks"] or 0)
+    obtained = float(attempt["obtained_marks"] or 0)
+    percentage = (obtained / total * 100) if total else 0
+    for q in questions:
+        maximum = float(q["maximum_marks"] or 0)
+        awarded = float(q["awarded_marks"] or 0)
+        if q["question_type"] == "mcq":
+            q["is_correct"] = bool(q["selected_option"] and
+                                   str(q["selected_option"]).strip().upper() ==
+                                   str(q["correct_option"] or "").strip().upper())
+            q["answer_status"] = "Correct" if q["is_correct"] else "Incorrect"
+        elif awarded >= maximum and maximum > 0:
+            q["answer_status"] = "Correct"
+        elif awarded > 0:
+            q["answer_status"] = "Partially correct"
+        else:
+            q["answer_status"] = "Incorrect"
+    return jsonify({
+        "ok": True, "attempt": attempt, "questions": questions,
+        "summary": {"obtained_marks": obtained, "total_marks": total,
+                    "percentage": round(percentage, 2)}
+    })
+
+
+@app.get("/api/attempts/<attempt_id>/result.pdf")
+def download_student_result_pdf(attempt_id):
+    if not student_required():
+        return error("Student sign-in required", 401)
+    with db() as conn, conn.cursor() as cur:
+        attempt = _student_result_attempt(cur, attempt_id)
+        denied = _student_result_gate(attempt)
+        if denied:
+            return denied
+        questions = _student_result_questions(cur, attempt_id)
+
+    from xml.sax.saxutils import escape
+    import unicodedata
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
+
+    clean = lambda value: unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+    total = float(attempt["total_marks"] or 0)
+    obtained = float(attempt["obtained_marks"] or 0)
+    percentage = (obtained / total * 100) if total else 0
+    submitted = attempt["submitted_at"]
+    if submitted.tzinfo is None:
+        submitted = submitted.replace(tzinfo=timezone.utc)
+    submitted_text = submitted.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d %B %Y, %I:%M %p IST")
+    expiry = attempt["result_expires_at"].astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d %B %Y, %I:%M %p IST")
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=42, leftMargin=42, topMargin=42, bottomMargin=42)
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("StudentResultTitle", parent=styles["Title"], alignment=TA_CENTER, textColor=colors.HexColor("#172554"), fontSize=18, leading=23, spaceAfter=6)
+    meta_style = ParagraphStyle("StudentResultMeta", parent=styles["Normal"], fontSize=9, leading=13, textColor=colors.HexColor("#334155"))
+    q_style = ParagraphStyle("StudentResultQuestion", parent=styles["Normal"], fontSize=10, leading=14, spaceAfter=5)
+    small_style = ParagraphStyle("StudentResultSmall", parent=styles["Normal"], fontSize=9, leading=12, leftIndent=10)
+    story = [
+        Paragraph("EXAMINATION RESULT & ANSWER REVIEW", title_style),
+        Paragraph(escape(clean(attempt["exam_title"])), ParagraphStyle("StudentExamName", parent=meta_style, alignment=TA_CENTER, fontSize=11, spaceAfter=14)),
+    ]
+    summary = [
+        ["Student", clean(attempt["student_name"]), "Class", clean(attempt["student_class"])],
+        ["Marks obtained", f"{obtained:g}", "Total marks", f"{total:g}"],
+        ["Percentage", f"{percentage:.2f}%", "Submitted", submitted_text],
+        ["Student access until", expiry, "", ""],
+    ]
+    table = Table(summary, colWidths=[100, 160, 75, 145])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eef2ff")),
+        ("BACKGROUND", (2, 0), (2, 1), colors.HexColor("#eef2ff")),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (2, 0), (2, 1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), .5, colors.HexColor("#d8deeb")),
+        ("SPAN", (1, 3), (3, 3)),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story += [table, Spacer(1, 18), Paragraph("COMPLETE QUESTION PAPER & ANSWER REVIEW", styles["Heading2"]), Spacer(1, 6)]
+    for idx, q in enumerate(questions, 1):
+        maximum = float(q["maximum_marks"] or 0)
+        awarded = float(q["awarded_marks"] or 0)
+        status = q.get("answer_status")
+        if not status:
+            if q["question_type"] == "mcq":
+                status = "Correct" if q["selected_option"] and str(q["selected_option"]).strip().upper() == str(q["correct_option"] or "").strip().upper() else "Incorrect"
+            elif awarded >= maximum and maximum > 0:
+                status = "Correct"
+            elif awarded > 0:
+                status = "Partially correct"
+            else:
+                status = "Incorrect"
+        parts = [Paragraph(f'<b>Q{idx}. {escape(clean(q["prompt"]))}</b> <font color="#64748b">({maximum:g} marks)</font>', q_style)]
+        opts = q["options"] or []
+        opt_items = list(opts.items()) if isinstance(opts, dict) else [(chr(65+i), val) for i, val in enumerate(opts)] if isinstance(opts, list) else []
+        for key, value in opt_items:
+            selected = str(q["selected_option"] or "").strip().upper() == str(key).strip().upper()
+            correct = str(q["correct_option"] or "").strip().upper() == str(key).strip().upper()
+            suffix = " — Your answer" if selected else ""
+            suffix += " — Correct answer" if correct else ""
+            parts.append(Paragraph(f'{"[x]" if selected else "[ ]"} {escape(clean(key))}. {escape(clean(value))}{escape(suffix)}', small_style))
+        if q["question_type"] != "mcq":
+            parts.append(Paragraph("<b>Your answer:</b> " + escape(clean(q["answer_text"] or "Not answered")), small_style))
+            parts.append(Paragraph("<b>Reference answer:</b> " + escape(clean(q["expected_answer"] or "No reference answer configured")), small_style))
+        elif not q["selected_option"]:
+            parts.append(Paragraph("<b>Your answer:</b> Not answered", small_style))
+        if q["question_type"] == "mcq":
+            correct_text = next((str(v) for k, v in opt_items if str(k).strip().upper() == str(q["correct_option"] or "").strip().upper()), "")
+            parts.append(Paragraph("<b>Correct answer:</b> " + escape(clean((str(q["correct_option"] or "") + ". " + correct_text).strip(". "))), small_style))
+        parts.append(Paragraph(f'<b>Result:</b> {escape(status)} &nbsp;&nbsp; <b>Marks awarded:</b> {awarded:g} / {maximum:g}', small_style))
+        if q["feedback"]:
+            parts.append(Paragraph("<b>Feedback:</b> " + escape(clean(q["feedback"])), small_style))
+        story.append(KeepTogether(parts))
+        story.append(Spacer(1, 10))
+
+    def branding(canvas, page_doc):
+        width, height = A4
+        canvas.saveState()
+        canvas.translate(width/2, height/2)
+        canvas.rotate(35)
+        canvas.setFillColor(colors.HexColor("#cbd5e1"))
+        if hasattr(canvas, "setFillAlpha"):
+            canvas.setFillAlpha(.10)
+        canvas.setFont("Helvetica-Bold", 27)
+        canvas.drawCentredString(0, 0, "Abhishek Santra English Guidance")
+        canvas.restoreState()
+        canvas.saveState()
+        canvas.setFillColor(colors.HexColor("#475569"))
+        canvas.setFont("Helvetica-Bold", 8)
+        canvas.drawRightString(width-42, 22, "Abhishek Santra English Guidance")
+        canvas.restoreState()
+    doc.build(story, onFirstPage=branding, onLaterPages=branding)
+    buffer.seek(0)
+    safe_name = "".join(ch for ch in str(attempt["student_name"]) if ch.isalnum() or ch in (" ", "-", "_")).strip().replace(" ", "_") or "student"
+    response = send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=f"{safe_name}_exam_result_review.pdf")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.get("/api/student/attempts")
@@ -827,18 +1028,28 @@ def student_attempts():
         cur.execute("""
             SELECT a.id, a.status, a.started_at, a.submitted_at, a.evaluated_at,
                    e.title AS exam_title, e.subject, e.total_marks,
+                   a.submitted_at + interval '5 minutes' AS result_available_at,
+                   a.submitted_at + interval '53 hours' AS result_expires_at,
                    CASE WHEN a.status='evaluated' THEN
                      COALESCE((SELECT SUM(ev.final_marks)
                                FROM portal_v2_evaluations ev
-                               WHERE ev.attempt_id=a.id), 0)
+                               WHERE ev.attempt_id=a.id), 0)::float
                    ELSE NULL END AS obtained_marks
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             WHERE lower(btrim(a.student_name)) = lower(btrim(%s))
               AND lower(btrim(a.student_class)) = lower(btrim(%s))
+              AND (
+                a.status='in_progress'
+                OR (a.status IN ('submitted', 'evaluated')
+                    AND a.submitted_at IS NOT NULL
+                    AND now() < a.submitted_at + interval '53 hours')
+              )
             ORDER BY a.started_at DESC
         """, (session["student_name"], session["student_class"]))
         return jsonify({"ok": True, "attempts": cur.fetchall()})
+
+
 
 
 @app.get("/teacher")
