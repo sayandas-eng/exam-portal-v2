@@ -31,27 +31,28 @@
   function renderExams() {
     const query = $("#exam-search").value.trim().toLowerCase();
     const status = $("#status-filter").value;
-    const filtered = exams.filter(e => (status === "all" || e.status === status) &&
+    // The Overview panel is intentionally a live-exams dashboard only.
+    const filtered = exams.filter(e => e.status === "live" &&
       [e.title,e.subject,e.topic,e.target_class].filter(Boolean).join(" ").toLowerCase().includes(query));
     $("#stat-total").textContent = exams.length;
     $("#stat-live").textContent = exams.filter(e => e.status === "live").length;
     $("#stat-draft").textContent = exams.filter(e => e.status === "draft").length;
     $("#stat-questions").textContent = exams.reduce((n,e) => n + Number(e.question_count||0),0);
-    $("#exam-count").textContent = filtered.length + (filtered.length === 1 ? " examination" : " examinations");
+    $("#exam-count").textContent = filtered.length + (filtered.length === 1 ? " running examination" : " running examinations");
     const body = $("#exam-table-body");
     if (!adminConnected) {
-      body.innerHTML = '<tr><td colspan="7" class="empty-cell"><div class="empty-state"><span class="empty-icon">⌑</span><strong>Connect your admin account</strong><p>Enter your admin access key above to load your examinations.</p></div></td></tr>';
+      body.innerHTML = '<tr><td colspan="8" class="empty-cell"><div class="empty-state"><span class="empty-icon">⌑</span><strong>Connect your admin account</strong><p>Enter your admin access key above to load your examinations.</p></div></td></tr>';
       return;
     }
     if (!filtered.length) {
-      body.innerHTML = '<tr><td colspan="7" class="empty-cell"><div class="empty-state"><span class="empty-icon">▤</span><strong>No examinations found</strong><p>Create your first exam or adjust your search.</p></div></td></tr>';
+      body.innerHTML = '<tr><td colspan="8" class="empty-cell"><div class="empty-state"><span class="empty-icon">▤</span><strong>No examinations found</strong><p>Create your first exam or adjust your search.</p></div></td></tr>';
       return;
     }
     body.innerHTML = filtered.map(e => {
       const statusClass = "status-" + e.status;
       const canPublish = e.status === "draft" || e.status === "paused";
       return '<tr><td><div class="exam-title">'+escapeHtml(e.title)+'</div><div class="exam-subtitle">'+escapeHtml(e.topic||"")+(e.target_class ? " · "+escapeHtml(e.target_class) : "")+'</div></td>'+
-        '<td>'+escapeHtml(e.subject)+'</td><td>'+Number(e.question_count||0)+'</td><td>'+Number(e.duration_minutes)+' min</td><td>'+Number(e.total_marks)+'</td>'+
+        '<td>'+escapeHtml(e.subject)+'</td><td>'+Number(e.question_count||0)+'</td><td>'+Number(e.duration_minutes)+' min</td><td>'+Number(e.total_marks)+'</td><td><strong>'+Number(e.submitted_count||0)+'</strong> student'+(Number(e.submitted_count||0)===1?'':'s')+'</td>'+
         '<td><span class="status-pill '+statusClass+'">'+escapeHtml(e.status)+'</span></td><td><div class="row-actions">'+(canPublish?'<button class="row-action" data-publish="'+e.id+'">Publish</button>':'')+'<button class="row-action row-delete" data-delete="'+e.id+'">Delete</button></div></td></tr>';
     }).join("");
   }

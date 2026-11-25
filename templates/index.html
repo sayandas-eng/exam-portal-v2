@@ -88,13 +88,13 @@
             <div><h2>Your examinations</h2><p>Keep track of drafts and published exams.</p></div>
             <div class="table-tools">
               <label class="search-box"><span>⌕</span><input id="exam-search" type="search" placeholder="Search exams"></label>
-              <select id="status-filter" aria-label="Filter by status"><option value="all">All statuses</option><option value="draft">Draft</option><option value="live">Published</option><option value="paused">Paused</option><option value="closed">Closed</option></select>
+              <select id="status-filter" aria-label="Exam status" disabled><option value="live">Currently running</option></select>
             </div>
           </div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>EXAMINATION</th><th>SUBJECT</th><th>QUESTIONS</th><th>DURATION</th><th>MARKS</th><th>STATUS</th><th></th></tr></thead>
-              <tbody id="exam-table-body"><tr><td colspan="7" class="empty-cell"><div class="empty-state"><span class="empty-icon">▤</span><strong>Connect your admin account</strong><p>Enter your admin access key above to load your examinations.</p></div></td></tr></tbody>
+              <thead><tr><th>EXAMINATION</th><th>SUBJECT</th><th>QUESTIONS</th><th>DURATION</th><th>MARKS</th><th>SUBMISSIONS</th><th>STATUS</th><th></th></tr></thead>
+              <tbody id="exam-table-body"><tr><td colspan="8" class="empty-cell"><div class="empty-state"><span class="empty-icon">▤</span><strong>Connect your admin account</strong><p>Enter your admin access key above to load your examinations.</p></div></td></tr></tbody>
             </table>
           </div>
           <div class="table-footer"><span id="exam-count">No examinations loaded</span><button class="text-button" id="refresh-button">↻ Refresh</button></div>
