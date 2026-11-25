@@ -1165,11 +1165,17 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
             draw_text(c, split_x + (table_right-split_x)/2, yy + 21,
                       grade_text, 17, ink, "Helvetica-Bold", "center")
 
-        # Teacher remark is deliberately kept as in the supplied template.
+        # Automatic student-facing remark, shared by Student and Teacher PDFs.
+        # Award full praise only for an exact 100% result; otherwise encourage improvement.
         draw_text(c, 50, 1105, "T E A C H E R ' S   R E M A R K S",
                   19, gold, "Helvetica-Bold")
         draw_line(c, 346, 1105, 974, 1105, gold, 2)
-        draw_text(c, 72, 1153, "There will be teacher remark",
+        remark = (
+            "Very good! Stay focused and keep up the excellent work in your next exam."
+            if total > 0 and obtained >= total
+            else "There is room for improvement. Keep practising and do your best in the next exam."
+        )
+        draw_text(c, 72, 1153, remark,
                   25, ink, "Times-Bold", max_width=850)
         draw_line(c, 48, 1182, 976, 1182, line_grey, 1)
         draw_line(c, 48, 1218, 976, 1218, line_grey, 1)
