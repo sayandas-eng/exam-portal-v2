@@ -1172,7 +1172,7 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         draw_line(c, 346, 1105, 974, 1105, gold, 2)
         remark = (
             "Very good! Stay focused and keep up the excellent work in your next exam."
-            if total > 0 and obtained >= total
+            if total > 0 and abs(percentage - 100.0) < 0.005
             else "There is room for improvement. Keep practising and do your best in the next exam."
         )
         draw_text(c, 72, 1153, remark,
