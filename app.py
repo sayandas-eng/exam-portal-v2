@@ -1037,6 +1037,12 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         draw_text(c, 242, 198,
             "MADHYAMIK   •   HIGHER SECONDARY   •   GHATAL, PASCHIM MEDINIPUR",
             17, pale, "Helvetica", max_width=735)
+        # Fixed AI sparkle mark, drawn as vector lines to avoid font glyph issues.
+        c.setStrokeColor(pale); c.setLineWidth(2.2 * sx)
+        for cx, cy, radius in ((944, 34, 10), (965, 23, 5)):
+            c.line(px(cx-radius), py(cy), px(cx+radius), py(cy))
+            c.line(px(cx), py(cy-radius), px(cx), py(cy+radius))
+        draw_text(c, 990, 57, "AI", 25, pale, "Helvetica-Bold", "right")
 
         draw_text(c, 512, 354, "R E S U L T   S H E E T", 45, ink, "Times-Bold", "center")
         draw_line(c, 50, 355, 265, 355, gold, 2)
@@ -1259,8 +1265,12 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         draw_text(c, 242, 198,
             "MADHYAMIK   •   HIGHER SECONDARY   •   GHATAL, PASCHIM MEDINIPUR",
             17, pale, "Helvetica", max_width=735)
-        # Small fixed AI mark at the upper-right, matching the supplied letterhead.
-        draw_text(c, 978, 55, "✦ AI", 27, pale, "Helvetica-Bold", "right")
+        # Fixed AI sparkle mark, drawn as vector lines to avoid font glyph issues.
+        c.setStrokeColor(pale); c.setLineWidth(2.2 * sx)
+        for cx, cy, radius in ((944, 34, 10), (965, 23, 5)):
+            c.line(px(cx-radius), py(cy), px(cx+radius), py(cy))
+            c.line(px(cx), py(cy-radius), px(cx), py(cy+radius))
+        draw_text(c, 990, 57, "AI", 25, pale, "Helvetica-Bold", "right")
 
         # Footer: matching gold wave and navy band on every continuation page.
         p = c.beginPath()
