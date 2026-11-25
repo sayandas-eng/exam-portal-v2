@@ -497,19 +497,40 @@ def delete_exam(exam_id):
         exam = cur.fetchone()
         if not exam:
             return error("Exam not found or already removed", 404)
-        # Delete all exam-specific student data, including in-progress attempts.
-        # The exam definition is retained internally with status='deleted' so
-        # audit/history references remain valid, but it disappears from portals.
+        # Removing an exam from the portals must NOT erase completed student
+        # work. Keep submitted/evaluated attempts, answers, evaluations, and the
+        # exam questions so students can still view/download their results for
+        # the full five-minute + 48-hour result-access window.
+        # Only unfinished attempts are discarded because they have no result.
         cur.execute("""
             DELETE FROM portal_v2_evaluations
-            WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id=%s)
+            WHERE attempt_id IN (
+                SELECT id FROM portal_v2_attempts
+                WHERE exam_id=%s AND status='in_progress'
+            )
         """, (exam_id,))
         cur.execute("""
             DELETE FROM portal_v2_answers
-            WHERE attempt_id IN (SELECT id FROM portal_v2_attempts WHERE exam_id=%s)
+            WHERE attempt_id IN (
+                SELECT id FROM portal_v2_attempts
+                WHERE exam_id=%s AND status='in_progress'
+            )
         """, (exam_id,))
-        cur.execute("DELETE FROM portal_v2_attempts WHERE exam_id=%s", (exam_id,))
+        cur.execute("""
+            DELETE FROM portal_v2_attempts
+            WHERE exam_id=%s AND status='in_progress'
+        """, (exam_id,))
         deleted_attempts = cur.rowcount
+        cur.execute("""
+            SELECT COUNT(*)::int AS preserved_results
+            FROM portal_v2_attempts
+            WHERE exam_id=%s
+              AND status IN ('submitted', 'evaluated')
+              AND submitted_at IS NOT NULL
+        """, (exam_id,))
+        preserved_results = cur.fetchone()["preserved_results"]
+        # Soft-delete the exam definition. Questions remain attached to it and
+        # are needed to render the complete student answer review.
         cur.execute("""
             UPDATE portal_v2_exams
             SET status='deleted', pdf_enabled=FALSE, pdf_cleared_at=now()
@@ -517,11 +538,12 @@ def delete_exam(exam_id):
         """, (exam_id,))
         cur.execute("""
             INSERT INTO portal_v2_audit_log (actor, action, entity_type, entity_id)
-            VALUES ('admin', 'exam_deleted_with_submissions', 'exam', %s)
+            VALUES ('admin', 'exam_deleted_results_preserved', 'exam', %s)
         """, (exam_id,))
     return jsonify({"ok": True, "exam_id": exam_id, "status": "deleted",
-                    "deleted_attempts": deleted_attempts,
-                    "message": "The examination and all its submissions, answers, marks, and results have been deleted."})
+                    "deleted_in_progress_attempts": deleted_attempts,
+                    "preserved_student_results": preserved_results,
+                    "message": "The examination was removed from the portals. Completed student results and answer reviews have been preserved."})
 
 
 @app.post("/api/exams/<exam_id>/start")
