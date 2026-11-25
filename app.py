@@ -1064,14 +1064,28 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         ]
         for xx, label in headers:
             draw_text(c, xx, 593, label, 18, pale, "Helvetica-Bold", "center")
-        exam_lines = simpleSplit(clean(exam_title), "Times-Bold", 23 * sx, px(270))
-        if len(exam_lines) > 2:
-            exam_lines = [exam_lines[0], " ".join(exam_lines[1:])]
-        if len(exam_lines) == 1:
-            draw_text(c, 196, 650, exam_lines[0], 23, ink, "Times-Bold", "center", 270)
-        else:
-            draw_text(c, 196, 637, exam_lines[0], 21, ink, "Times-Bold", "center", 270)
-            draw_text(c, 196, 662, exam_lines[1], 21, ink, "Times-Bold", "center", 270)
+        # Wrap the complete examination title inside its own table cell.
+        # Keep all lines centred and prevent a long subtitle from spilling into
+        # the adjacent Full Marks column or outside the table border.
+        exam_font_size = 16
+        exam_lines = simpleSplit(
+            clean(exam_title), "Times-Bold",
+            exam_font_size * sx, px(270)
+        )
+        while len(exam_lines) > 3 and exam_font_size > 12:
+            exam_font_size -= 1
+            exam_lines = simpleSplit(
+                clean(exam_title), "Times-Bold",
+                exam_font_size * sx, px(270)
+            )
+        leading = 18
+        first_baseline = 648 - ((len(exam_lines) - 1) * leading / 2)
+        for line_index, line_text in enumerate(exam_lines[:3]):
+            draw_text(
+                c, 196, first_baseline + line_index * leading,
+                line_text, exam_font_size, ink, "Times-Bold",
+                "center", 270
+            )
         draw_text(c, 427, 651, f"{total:g}", 23, ink, "Times-Bold", "center")
         draw_text(c, 588, 651, f"{obtained:g}", 23, ink, "Times-Bold", "center")
         draw_text(c, 756, 651, f"{percentage:.0f}%", 23, ink, "Times-Bold", "center")
@@ -1092,30 +1106,23 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         c.line(px(306), py(793), px(277), py(800))
         draw_text(c, 277, 843, "O V E R A L L   R E S U L T",
                   22, pale, "Helvetica-Bold", "center")
-        # Laurel wreath around the medal, drawn as individual gold leaves.
+        # Compact medal layout: heading sits above the ring, with the
+        # percentage and grade centred inside it. Laurel leaves stay clear
+        # of the ring and within the navy panel.
         for side in (-1, 1):
-            for i in range(9):
-                yy = 1007 - i * 18
-                xx = 277 + side * (145 - abs(4-i) * 3)
+            for i in range(8):
+                yy = 1010 - i * 18
+                xx = 277 + side * (118 + (i % 2) * 5)
                 c.saveState()
                 c.translate(px(xx), py(yy))
-                c.rotate(side * (32 + i * 5))
+                c.rotate(side * (28 + i * 5))
                 c.setFillColor(gold_light)
-                c.ellipse(-px(5), -px(10), px(5), px(10), fill=1, stroke=0)
+                c.ellipse(-px(5), -px(9), px(5), px(9), fill=1, stroke=0)
                 c.restoreState()
-        # Gold medal ribbon.
-        p = c.beginPath()
-        p.moveTo(px(239), py(1000)); p.lineTo(px(270), py(1000))
-        p.lineTo(px(263), py(1050)); p.lineTo(px(240), py(1037)); p.close()
-        c.setFillColor(gold); c.drawPath(p, fill=1, stroke=0)
-        p = c.beginPath()
-        p.moveTo(px(284), py(1000)); p.lineTo(px(315), py(1000))
-        p.lineTo(px(314), py(1037)); p.lineTo(px(291), py(1050)); p.close()
-        c.setFillColor(gold_light); c.drawPath(p, fill=1, stroke=0)
-        c.setStrokeColor(gold_light); c.setLineWidth(14 * sx)
-        c.circle(px(277), py(933), px(112), stroke=1, fill=0)
-        draw_text(c, 277, 938, f"{percentage:.1f}%", 46, pale, "Times-Bold", "center")
-        draw_text(c, 277, 976, f"GRADE {grade}", 23, gold_light, "Helvetica-Bold", "center")
+        c.setStrokeColor(gold_light); c.setLineWidth(12 * sx)
+        c.circle(px(277), py(956), px(86), stroke=1, fill=0)
+        draw_text(c, 277, 950, f"{percentage:.1f}%", 42, pale, "Times-Bold", "center")
+        draw_text(c, 277, 985, f"GRADE {grade}", 20, gold_light, "Helvetica-Bold", "center")
 
         draw_round(c, 522, 744, 454, 315, 26, pale, gold, 2)
         draw_round(c, 565, 718, 390, 55, 25, gold, gold, 1)
