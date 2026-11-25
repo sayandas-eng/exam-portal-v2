@@ -919,6 +919,345 @@ def attempt_result(attempt_id):
     })
 
 
+
+def _result_grade(percentage):
+    if percentage >= 90: return "A+"
+    if percentage >= 80: return "A"
+    if percentage >= 70: return "B+"
+    if percentage >= 60: return "B"
+    if percentage >= 50: return "C+"
+    if percentage >= 40: return "C"
+    return "D"
+
+
+def _build_individual_marks_pdf(student_name, student_class, exam_title,
+                                full_marks, obtained_marks, question_rows,
+                                submitted_at=None):
+    """Render the fixed AS English Result Sheet cover, followed by answer review pages."""
+    from xml.sax.saxutils import escape
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.colors import HexColor
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+    from reportlab.platypus import (
+        BaseDocTemplate, PageTemplate, Frame, Paragraph, Spacer,
+        PageBreak, KeepTogether
+    )
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    from reportlab.lib.utils import simpleSplit
+    import unicodedata
+
+    clean = lambda value: unicodedata.normalize("NFKC", str(value or "")).strip()
+    total = float(full_marks or 0)
+    obtained = float(obtained_marks or 0)
+    percentage = (obtained / total * 100.0) if total else 0.0
+    grade = _result_grade(percentage)
+
+    page_w, page_h = A4
+    ref_w, ref_h = 1024.0, 1447.0
+    sx, sy = page_w / ref_w, page_h / ref_h
+    navy = HexColor("#082653")
+    gold = HexColor("#D8A72E")
+    gold_light = HexColor("#E9C46A")
+    cream = HexColor("#FFFAF3")
+    ink = HexColor("#092A5C")
+    pale = HexColor("#FFFDF8")
+    line_grey = HexColor("#9AA4B2")
+
+    def px(x): return x * sx
+    def py(y): return page_h - y * sy
+
+    def draw_rect(c, x, y, w, h, fill, stroke=None, lw=1):
+        c.setLineWidth(lw * sx)
+        c.setFillColor(fill)
+        if stroke: c.setStrokeColor(stroke)
+        c.rect(px(x), page_h - (y + h) * sy, px(w), px(h),
+               fill=1, stroke=1 if stroke else 0)
+
+    def draw_round(c, x, y, w, h, radius, fill, stroke=None, lw=1):
+        c.setLineWidth(lw * sx)
+        c.setFillColor(fill)
+        if stroke: c.setStrokeColor(stroke)
+        c.roundRect(px(x), page_h - (y + h) * sy, px(w), px(h),
+                    px(radius), fill=1, stroke=1 if stroke else 0)
+
+    def draw_line(c, x1, y1, x2, y2, color=gold, lw=2):
+        c.setStrokeColor(color)
+        c.setLineWidth(lw * sx)
+        c.line(px(x1), py(y1), px(x2), py(y2))
+
+    def draw_text(c, x, y, value, size=18, color=ink,
+                  font="Helvetica", align="left", max_width=None):
+        value = clean(value)
+        size_px = float(size)
+        if max_width:
+            while size_px > 12 and stringWidth(value, font, size_px * sx) > px(max_width):
+                size_px -= 0.5
+        c.setFillColor(color)
+        c.setFont(font, size_px * sx)
+        if align == "center": c.drawCentredString(px(x), py(y), value)
+        elif align == "right": c.drawRightString(px(x), py(y), value)
+        else: c.drawString(px(x), py(y), value)
+
+    def draw_cover(c, doc):
+        c.saveState()
+        draw_rect(c, 0, 0, ref_w, ref_h, cream)
+
+        # Full-bleed navy header and its gold wave.
+        p = c.beginPath()
+        p.moveTo(px(0), py(0)); p.lineTo(px(ref_w), py(0))
+        p.lineTo(px(ref_w), py(236))
+        p.curveTo(px(820), py(264), px(700), py(224), px(560), py(242))
+        p.curveTo(px(380), py(267), px(180), py(288), px(0), py(240))
+        p.close()
+        c.setFillColor(navy); c.drawPath(p, fill=1, stroke=0)
+        p = c.beginPath()
+        p.moveTo(px(0), py(222))
+        p.curveTo(px(220), py(278), px(350), py(265), px(520), py(238))
+        p.curveTo(px(730), py(207), px(860), py(268), px(1024), py(226))
+        p.lineTo(px(1024), py(253))
+        p.curveTo(px(850), py(292), px(720), py(235), px(520), py(265))
+        p.curveTo(px(330), py(292), px(160), py(306), px(0), py(250))
+        p.close()
+        c.setFillColor(gold_light); c.drawPath(p, fill=1, stroke=0)
+
+        # AS English identity and header typography.
+        c.setStrokeColor(gold); c.setLineWidth(5 * sx)
+        c.circle(px(108), py(102), px(70), stroke=1, fill=0)
+        draw_text(c, 108, 110, "AS", 42, gold, "Times-Bold", "center")
+        draw_text(c, 108, 137, "ENGLISH", 13, pale, "Helvetica-Bold", "center")
+        draw_line(c, 205, 48, 205, 153, gold, 2)
+        draw_text(c, 256, 57,
+            "E X C E L L E N C E   I N   E N G L I S H   S I N C E   T W O   D E C A D E S   O F   S E R V I C E",
+            13, pale, "Helvetica-Bold", max_width=735)
+        draw_text(c, 240, 117, "Abhishek Santra", 52, pale, "Times-Bold")
+        draw_text(c, 242, 160, "English Guidance", 37, gold_light, "Times-Italic")
+        draw_text(c, 242, 198,
+            "MADHYAMIK   •   HIGHER SECONDARY   •   GHATAL, PASCHIM MEDINIPUR",
+            17, pale, "Helvetica", max_width=735)
+
+        draw_text(c, 512, 354, "R E S U L T   S H E E T", 45, ink, "Times-Bold", "center")
+        draw_line(c, 50, 355, 265, 355, gold, 2)
+        draw_line(c, 760, 355, 974, 355, gold, 2)
+        draw_text(c, 512, 399, "M O N T H L Y   A S S E S S M E N T",
+                  20, gold, "Helvetica-Bold", "center")
+
+        # Student name and class panel.
+        draw_round(c, 48, 428, 928, 105, 10, pale, HexColor("#6F7C91"), 2)
+        draw_line(c, 560, 430, 560, 531, gold, 1)
+        draw_text(c, 76, 455, "S T U D E N T   N A M E", 17, gold, "Helvetica-Bold")
+        draw_text(c, 600, 455, "C L A S S  /  L E V E L", 17, gold, "Helvetica-Bold")
+        draw_text(c, 76, 504, student_name, 36, ink, "Times-Bold", max_width=450)
+        draw_text(c, 600, 504, student_class, 36, ink, "Times-Bold", max_width=345)
+
+        # Examination marks table.
+        draw_round(c, 48, 558, 928, 125, 12, pale, HexColor("#6F7C91"), 2)
+        draw_round(c, 48, 558, 928, 56, 12, navy, navy, 1)
+        draw_rect(c, 48, 596, 928, 18, navy)
+        col_edges = [48, 344, 510, 666, 846, 976]
+        for xx in col_edges[1:-1]:
+            draw_line(c, xx, 614, xx, 682, HexColor("#AAB1BC"), 1)
+        headers = [
+            (196, "EXAMINATION"), (427, "FULL MARKS"),
+            (588, "OBTAINED"), (756, "PERCENTAGE"), (911, "GRADE")
+        ]
+        for xx, label in headers:
+            draw_text(c, xx, 593, label, 18, pale, "Helvetica-Bold", "center")
+        exam_lines = simpleSplit(clean(exam_title), "Times-Bold", 23 * sx, px(270))
+        if len(exam_lines) > 2:
+            exam_lines = [exam_lines[0], " ".join(exam_lines[1:])]
+        if len(exam_lines) == 1:
+            draw_text(c, 196, 650, exam_lines[0], 23, ink, "Times-Bold", "center", 270)
+        else:
+            draw_text(c, 196, 637, exam_lines[0], 21, ink, "Times-Bold", "center", 270)
+            draw_text(c, 196, 662, exam_lines[1], 21, ink, "Times-Bold", "center", 270)
+        draw_text(c, 427, 651, f"{total:g}", 23, ink, "Times-Bold", "center")
+        draw_text(c, 588, 651, f"{obtained:g}", 23, ink, "Times-Bold", "center")
+        draw_text(c, 756, 651, f"{percentage:.0f}%", 23, ink, "Times-Bold", "center")
+        draw_text(c, 911, 651, grade, 23, ink, "Times-Bold", "center")
+
+        # Overall result medal and grade-calculation table.
+        draw_round(c, 48, 720, 458, 340, 28, navy, navy, 1)
+        draw_text(c, 277, 800, "♧", 42, gold_light, "Helvetica", "center")
+        draw_text(c, 277, 843, "O V E R A L L   R E S U L T",
+                  22, pale, "Helvetica-Bold", "center")
+        c.setStrokeColor(gold_light); c.setLineWidth(14 * sx)
+        c.circle(px(277), py(933), px(112), stroke=1, fill=0)
+        draw_text(c, 277, 938, f"{percentage:.1f}%", 46, pale, "Times-Bold", "center")
+        draw_text(c, 277, 976, f"GRADE {grade}", 23, gold_light, "Helvetica-Bold", "center")
+
+        draw_round(c, 522, 744, 454, 315, 26, pale, gold, 2)
+        draw_round(c, 565, 718, 390, 55, 25, gold, gold, 1)
+        draw_text(c, 760, 755, "GRADE CALCULATION", 22, navy, "Helvetica-Bold", "center")
+        draw_rect(c, 620, 789, 356, 48, navy)
+        draw_text(c, 733, 820, "PERCENTAGE RANGE", 16, pale, "Helvetica-Bold", "center")
+        draw_text(c, 911, 820, "GRADE", 16, pale, "Helvetica-Bold", "center")
+        grade_rows = [
+            ("90% – 100%", "A+"), ("80% – 89%", "A"),
+            ("70% – 79%", "B+"), ("60% – 69%", "B"),
+            ("50% – 59%", "C+"), ("40% – 49%", "C"),
+            ("Below 40%", "D")
+        ]
+        for i, (range_text, grade_text) in enumerate(grade_rows):
+            yy = 837 + i * 31
+            if i % 2 == 0:
+                draw_rect(c, 620, yy, 356, 31, HexColor("#F7F0DF"))
+            draw_line(c, 620, yy + 31, 976, yy + 31, gold, 1)
+            draw_line(c, 846, yy, 846, yy + 31, gold, 1)
+            draw_text(c, 733, yy + 22, range_text, 17, ink, "Helvetica-Bold", "center")
+            draw_text(c, 911, yy + 22, grade_text, 18, ink, "Helvetica-Bold", "center")
+
+        # Teacher remark is deliberately kept as in the supplied template.
+        draw_text(c, 50, 1105, "T E A C H E R ' S   R E M A R K S",
+                  19, gold, "Helvetica-Bold")
+        draw_line(c, 346, 1105, 974, 1105, gold, 2)
+        draw_text(c, 72, 1153, "There will be teacher remark",
+                  25, ink, "Times-Bold", max_width=850)
+        draw_line(c, 48, 1182, 976, 1182, line_grey, 1)
+        draw_line(c, 48, 1218, 976, 1218, line_grey, 1)
+        draw_line(c, 50, 1287, 438, 1287, ink, 2)
+        draw_line(c, 642, 1287, 974, 1287, ink, 2)
+        draw_text(c, 78, 1320, "DATE OF ISSUE:", 17, ink, "Helvetica-Bold")
+        draw_text(c, 722, 1320, "A B H I S H E K   S A N T R A",
+                  17, ink, "Helvetica-Bold")
+
+        # Bottom gold wave and navy footer.
+        p = c.beginPath()
+        p.moveTo(px(0), py(1360))
+        p.curveTo(px(250), py(1390), px(400), py(1344), px(570), py(1350))
+        p.curveTo(px(760), py(1356), px(880), py(1400), px(1024), py(1350))
+        p.lineTo(px(1024), py(1447)); p.lineTo(px(0), py(1447)); p.close()
+        c.setFillColor(navy); c.drawPath(p, fill=1, stroke=0)
+        p = c.beginPath()
+        p.moveTo(px(0), py(1344))
+        p.curveTo(px(220), py(1380), px(400), py(1334), px(570), py(1338))
+        p.curveTo(px(770), py(1345), px(890), py(1383), px(1024), py(1337))
+        p.lineTo(px(1024), py(1364))
+        p.curveTo(px(850), py(1410), px(730), py(1362), px(570), py(1363))
+        p.curveTo(px(360), py(1356), px(190), py(1412), px(0), py(1370))
+        p.close()
+        c.setFillColor(gold_light); c.drawPath(p, fill=1, stroke=0)
+        draw_text(c, 64, 1409, "“Learn the language. Own the future.”",
+                  20, gold_light, "Times-Italic")
+        draw_text(c, 960, 1409, "Ghatal, Paschim Medinipur",
+                  18, pale, "Helvetica", "right")
+        c.restoreState()
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "ASResultQuestionsTitle", parent=styles["Heading1"],
+        textColor=navy, fontName="Helvetica-Bold", fontSize=16,
+        leading=21, spaceAfter=14
+    )
+    question_style = ParagraphStyle(
+        "ASResultQuestion", parent=styles["Normal"],
+        fontSize=10, leading=14, spaceAfter=5, textColor=HexColor("#172554")
+    )
+    detail_style = ParagraphStyle(
+        "ASResultDetail", parent=styles["Normal"],
+        fontSize=9, leading=12, leftIndent=12, spaceAfter=3
+    )
+    buffer = io.BytesIO()
+    doc = BaseDocTemplate(buffer, pagesize=A4, title="Individual Marks Result",
+                         leftMargin=42, rightMargin=42, topMargin=42, bottomMargin=42)
+    cover_frame = Frame(42, 42, page_w - 84, page_h - 84, id="cover_frame",
+                        leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
+    question_frame = Frame(42, 42, page_w - 84, page_h - 84, id="question_frame",
+                           leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
+
+    def cover_page(c, d):
+        draw_cover(c, d)
+
+    def question_page(c, d):
+        c.saveState()
+        c.setFillColor(HexColor("#64748b"))
+        c.setFont("Helvetica-Bold", 8)
+        c.drawRightString(page_w - 42, 22, "Abhishek Santra English Guidance")
+        c.restoreState()
+
+    doc.addPageTemplates([
+        PageTemplate(id="Cover", frames=cover_frame, onPage=cover_page,
+                     autoNextPageTemplate="Questions"),
+        PageTemplate(id="Questions", frames=question_frame, onPage=question_page)
+    ])
+
+    story = [PageBreak(),
+             Paragraph("COMPLETE QUESTION PAPER & ANSWER REVIEW", title_style),
+             Paragraph(escape(clean(exam_title)), ParagraphStyle(
+                 "ASResultExamName", parent=styles["Normal"],
+                 textColor=HexColor("#475569"), fontSize=10, leading=14, spaceAfter=12
+             ))]
+    for idx, q in enumerate(question_rows or [], 1):
+        maximum = float(q.get("maximum_marks") or 0)
+        awarded = q.get("awarded_marks")
+        if awarded is None:
+            awarded = q.get("final_marks")
+        if awarded is None:
+            awarded = q.get("ai_marks")
+        awarded = float(awarded or 0)
+        qtype = str(q.get("question_type") or "")
+        selected = str(q.get("selected_option") or "").strip()
+        correct = str(q.get("correct_option") or "").strip()
+        status = "Correct" if selected and correct and selected.casefold() == correct.casefold() else "Incorrect"
+        if qtype != "mcq":
+            status = "Correct" if maximum > 0 and awarded >= maximum else (
+                "Partially correct" if awarded > 0 else "Incorrect"
+            )
+        parts = [Paragraph(
+            f'<b>Q{idx}. {escape(clean(q.get("prompt")))}</b> '
+            f'<font color="#64748b">({maximum:g} marks)</font>', question_style
+        )]
+        opts = q.get("options") or []
+        opt_items = list(opts.items()) if isinstance(opts, dict) else (
+            [(chr(65 + i), val) for i, val in enumerate(opts)] if isinstance(opts, list) else []
+        )
+        if qtype == "mcq":
+            for key, value in opt_items:
+                is_selected = selected.casefold() == str(key).strip().casefold()
+                is_correct = correct.casefold() == str(key).strip().casefold()
+                tags = []
+                if is_selected: tags.append("STUDENT'S ANSWER")
+                if is_correct: tags.append("CORRECT ANSWER")
+                suffix = f' <font color="#16804A"><b>— {escape(" / ".join(tags))}</b></font>' if tags else ""
+                parts.append(Paragraph(
+                    f'{ "[x]" if is_selected else "[ ]" } {escape(clean(key))}. '
+                    f'{escape(clean(value))}{suffix}', detail_style
+                ))
+            if not selected:
+                parts.append(Paragraph("<b>Your answer:</b> Not answered", detail_style))
+            if correct:
+                correct_text = next((str(v) for k, v in opt_items
+                                     if str(k).strip().casefold() == correct.casefold()), "")
+                parts.append(Paragraph(
+                    "<b>Correct answer:</b> " + escape(clean((correct + ". " + correct_text).strip(". "))),
+                    detail_style
+                ))
+        else:
+            parts.append(Paragraph(
+                "<b>Your answer:</b> " + escape(clean(q.get("answer_text") or "Not answered")),
+                detail_style
+            ))
+            parts.append(Paragraph(
+                "<b>Correct / reference answer:</b> " +
+                escape(clean(q.get("expected_answer") or "No reference answer configured")),
+                detail_style
+            ))
+        parts.append(Paragraph(
+            f'<b>Evaluation:</b> {escape(status)} &nbsp;&nbsp; '
+            f'<b>Marks awarded:</b> {awarded:g} / {maximum:g}', detail_style
+        ))
+        feedback = q.get("feedback") or q.get("teacher_feedback") or q.get("ai_feedback")
+        if feedback:
+            parts.append(Paragraph("<b>Feedback:</b> " + escape(clean(feedback)), detail_style))
+        story.append(KeepTogether(parts))
+        story.append(Spacer(1, 9))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+
 @app.get("/api/attempts/<attempt_id>/result.pdf")
 def download_student_result_pdf(attempt_id):
     if not student_required():
@@ -929,114 +1268,14 @@ def download_student_result_pdf(attempt_id):
         if denied:
             return denied
         questions = _student_result_questions(cur, attempt_id)
-
-    from xml.sax.saxutils import escape
-    import unicodedata
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_CENTER
-    from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
-
-    clean = lambda value: unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
-    total = float(attempt["total_marks"] or 0)
-    obtained = float(attempt["obtained_marks"] or 0)
-    percentage = (obtained / total * 100) if total else 0
-    submitted = attempt["submitted_at"]
-    if submitted.tzinfo is None:
-        submitted = submitted.replace(tzinfo=timezone.utc)
-    submitted_text = submitted.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d %B %Y, %I:%M %p IST")
-    expiry = attempt["result_expires_at"].astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d %B %Y, %I:%M %p IST")
-
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=42, leftMargin=42, topMargin=42, bottomMargin=42)
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("StudentResultTitle", parent=styles["Title"], alignment=TA_CENTER, textColor=colors.HexColor("#172554"), fontSize=18, leading=23, spaceAfter=6)
-    meta_style = ParagraphStyle("StudentResultMeta", parent=styles["Normal"], fontSize=9, leading=13, textColor=colors.HexColor("#334155"))
-    q_style = ParagraphStyle("StudentResultQuestion", parent=styles["Normal"], fontSize=10, leading=14, spaceAfter=5)
-    small_style = ParagraphStyle("StudentResultSmall", parent=styles["Normal"], fontSize=9, leading=12, leftIndent=10)
-    story = [
-        Paragraph("EXAMINATION RESULT & ANSWER REVIEW", title_style),
-        Paragraph(escape(clean(attempt["exam_title"])), ParagraphStyle("StudentExamName", parent=meta_style, alignment=TA_CENTER, fontSize=11, spaceAfter=14)),
-    ]
-    summary = [
-        ["Student", clean(attempt["student_name"]), "Class", clean(attempt["student_class"])],
-        ["Marks obtained", f"{obtained:g}", "Total marks", f"{total:g}"],
-        ["Percentage", f"{percentage:.2f}%", "Submitted", submitted_text],
-        ["Student access until", expiry, "", ""],
-    ]
-    table = Table(summary, colWidths=[100, 160, 75, 145])
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eef2ff")),
-        ("BACKGROUND", (2, 0), (2, 1), colors.HexColor("#eef2ff")),
-        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-        ("FONTNAME", (2, 0), (2, 1), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("GRID", (0, 0), (-1, -1), .5, colors.HexColor("#d8deeb")),
-        ("SPAN", (1, 3), (3, 3)),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 7),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-        ("TOPPADDING", (0, 0), (-1, -1), 7),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-    ]))
-    story += [table, Spacer(1, 18), Paragraph("COMPLETE QUESTION PAPER & ANSWER REVIEW", styles["Heading2"]), Spacer(1, 6)]
-    for idx, q in enumerate(questions, 1):
-        maximum = float(q["maximum_marks"] or 0)
-        awarded = float(q["awarded_marks"] or 0)
-        status = q.get("answer_status")
-        if not status:
-            if q["question_type"] == "mcq":
-                status = "Correct" if q["selected_option"] and str(q["selected_option"]).strip().upper() == str(q["correct_option"] or "").strip().upper() else "Incorrect"
-            elif awarded >= maximum and maximum > 0:
-                status = "Correct"
-            elif awarded > 0:
-                status = "Partially correct"
-            else:
-                status = "Incorrect"
-        parts = [Paragraph(f'<b>Q{idx}. {escape(clean(q["prompt"]))}</b> <font color="#64748b">({maximum:g} marks)</font>', q_style)]
-        opts = q["options"] or []
-        opt_items = list(opts.items()) if isinstance(opts, dict) else [(chr(65+i), val) for i, val in enumerate(opts)] if isinstance(opts, list) else []
-        for key, value in opt_items:
-            selected = str(q["selected_option"] or "").strip().upper() == str(key).strip().upper()
-            correct = str(q["correct_option"] or "").strip().upper() == str(key).strip().upper()
-            suffix = " — Your answer" if selected else ""
-            suffix += " — Correct answer" if correct else ""
-            parts.append(Paragraph(f'{"[x]" if selected else "[ ]"} {escape(clean(key))}. {escape(clean(value))}{escape(suffix)}', small_style))
-        if q["question_type"] != "mcq":
-            parts.append(Paragraph("<b>Your answer:</b> " + escape(clean(q["answer_text"] or "Not answered")), small_style))
-            parts.append(Paragraph("<b>Reference answer:</b> " + escape(clean(q["expected_answer"] or "No reference answer configured")), small_style))
-        elif not q["selected_option"]:
-            parts.append(Paragraph("<b>Your answer:</b> Not answered", small_style))
-        if q["question_type"] == "mcq":
-            correct_text = next((str(v) for k, v in opt_items if str(k).strip().upper() == str(q["correct_option"] or "").strip().upper()), "")
-            parts.append(Paragraph("<b>Correct answer:</b> " + escape(clean((str(q["correct_option"] or "") + ". " + correct_text).strip(". "))), small_style))
-        parts.append(Paragraph(f'<b>Result:</b> {escape(status)} &nbsp;&nbsp; <b>Marks awarded:</b> {awarded:g} / {maximum:g}', small_style))
-        if q["feedback"]:
-            parts.append(Paragraph("<b>Feedback:</b> " + escape(clean(q["feedback"])), small_style))
-        story.append(KeepTogether(parts))
-        story.append(Spacer(1, 10))
-
-    def branding(canvas, page_doc):
-        width, height = A4
-        canvas.saveState()
-        canvas.translate(width/2, height/2)
-        canvas.rotate(35)
-        canvas.setFillColor(colors.HexColor("#cbd5e1"))
-        if hasattr(canvas, "setFillAlpha"):
-            canvas.setFillAlpha(.10)
-        canvas.setFont("Helvetica-Bold", 27)
-        canvas.drawCentredString(0, 0, "Abhishek Santra English Guidance")
-        canvas.restoreState()
-        canvas.saveState()
-        canvas.setFillColor(colors.HexColor("#475569"))
-        canvas.setFont("Helvetica-Bold", 8)
-        canvas.drawRightString(width-42, 22, "Abhishek Santra English Guidance")
-        canvas.restoreState()
-    doc.build(story, onFirstPage=branding, onLaterPages=branding)
-    buffer.seek(0)
+    buffer = _build_individual_marks_pdf(
+        attempt["student_name"], attempt["student_class"], attempt["exam_title"],
+        attempt["total_marks"], attempt["obtained_marks"], questions,
+        attempt.get("submitted_at")
+    )
     safe_name = "".join(ch for ch in str(attempt["student_name"]) if ch.isalnum() or ch in (" ", "-", "_")).strip().replace(" ", "_") or "student"
-    response = send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=f"{safe_name}_exam_result_review.pdf")
+    response = send_file(buffer, mimetype="application/pdf", as_attachment=True,
+                         download_name=f"{safe_name}_individual_marks.pdf")
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     return response
@@ -1338,6 +1577,7 @@ def evaluate_attempt(attempt_id):
         return error("Could not save evaluation", 500)
 
 
+
 @app.get("/api/admin/attempts/<attempt_id>/result.pdf")
 def download_attempt_result_pdf(attempt_id):
     with db() as conn, conn.cursor() as cur:
@@ -1360,8 +1600,10 @@ def download_attempt_result_pdf(attempt_id):
             return error("The result PDF is available after marks are finalised.", 409)
         cur.execute("""
             SELECT q.position, q.question_type, q.prompt, q.options,
+                   q.correct_option, q.expected_answer,
                    q.marks AS maximum_marks, ans.answer_text, ans.selected_option,
-                   ev.final_marks, ev.ai_marks
+                   ev.final_marks, ev.ai_marks,
+                   ev.teacher_feedback, ev.ai_feedback
             FROM portal_v2_questions q
             JOIN portal_v2_attempts a ON a.exam_id=q.exam_id
             LEFT JOIN portal_v2_answers ans
@@ -1383,102 +1625,17 @@ def download_attempt_result_pdf(attempt_id):
         """, (attempt_id,))
         marks = cur.fetchone()
 
-    from xml.sax.saxutils import escape
-    import unicodedata
-    pdf_text = lambda value: unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_CENTER
-    from reportlab.lib import colors
-    from reportlab.pdfbase.pdfmetrics import stringWidth
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
-
-    def add_pdf_branding(canvas, doc):
-        page_width, page_height = A4
-        canvas.saveState()
-        canvas.translate(page_width / 2, page_height / 2)
-        canvas.rotate(35)
-        canvas.setFillColor(colors.HexColor("#94a3b8"))
-        if hasattr(canvas, "setFillAlpha"):
-            canvas.setFillAlpha(0.5)
-        watermark = "Abhishek Santra English Guidance"
-        canvas.setFont("Helvetica-Bold", 30)
-        canvas.drawCentredString(0, 0, watermark)
-        canvas.restoreState()
-        canvas.saveState()
-        canvas.setFillColor(colors.HexColor("#475569"))
-        canvas.setFont("Helvetica-Bold", 8)
-        canvas.drawRightString(page_width - 42, 22, "Checked By Abhishek Santra")
-        canvas.restoreState()
-
-    submitted = result["submitted_at"]
-    if submitted:
-        if submitted.tzinfo is None:
-            submitted = submitted.replace(tzinfo=timezone.utc)
-        submitted_text = submitted.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%d %B %Y, %I:%M %p IST")
-    else:
-        submitted_text = "Not available"
-
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=42, leftMargin=42, topMargin=42, bottomMargin=42)
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("DetailedResultTitle", parent=styles["Title"], alignment=TA_CENTER, textColor=colors.HexColor("#172554"), fontSize=18, leading=23, spaceAfter=6)
-    meta_style = ParagraphStyle("DetailedResultMeta", parent=styles["Normal"], fontSize=9, leading=13, textColor=colors.HexColor("#334155"))
-    q_style = ParagraphStyle("QuestionText", parent=styles["Normal"], fontSize=10, leading=14, spaceAfter=5)
-    small_style = ParagraphStyle("OptionText", parent=styles["Normal"], fontSize=9, leading=12, leftIndent=10)
-    story = [
-        Paragraph("EXAMINATION RESULT", title_style),
-        Paragraph(escape(pdf_text(result["exam_title"])), ParagraphStyle("ExamName", parent=meta_style, alignment=TA_CENTER, fontSize=11, spaceAfter=14)),
-    ]
-    summary = [
-        ["Student", pdf_text(result["student_name"]), "Class", pdf_text(result["student_class"])],
-        ["Marks obtained", f'{float(marks["obtained_marks"]):g}', "Total marks", f'{float(marks["total_marks"]):g}'],
-        ["Submitted", submitted_text, "", ""],
-    ]
-    summary_table = Table(summary, colWidths=[85, 175, 75, 145])
-    summary_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eef2ff")),
-        ("BACKGROUND", (2, 0), (2, 1), colors.HexColor("#eef2ff")),
-        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-        ("FONTNAME", (2, 0), (2, 1), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("GRID", (0, 0), (-1, -1), .5, colors.HexColor("#d8deeb")),
-        ("SPAN", (1, 2), (3, 2)),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-    ]))
-    story += [summary_table, Spacer(1, 18), Paragraph("QUESTIONS AND STUDENT RESPONSES", styles["Heading2"]), Spacer(1, 6)]
-    for idx, q in enumerate(question_rows, 1):
-        parts = [Paragraph(f'<b>Q{idx}. {escape(pdf_text(q["prompt"]))}</b> <font color="#64748b">({float(q["maximum_marks"]):g} marks)</font>', q_style)]
-        opts = q["options"] or []
-        if isinstance(opts, dict):
-            opt_items = list(opts.items())
-        elif isinstance(opts, list):
-            opt_items = [(chr(65+i), val) for i, val in enumerate(opts)]
-        else:
-            opt_items = []
-        for key, value in opt_items:
-            selected = str(q["selected_option"] or "").strip().upper() == str(key).strip().upper()
-            prefix = "[x]" if selected else "[ ]"
-            parts.append(Paragraph(f'{prefix} {escape(pdf_text(key))}. {escape(pdf_text(value))}' + ("  <b>(Selected)</b>" if selected else ""), small_style))
-        if q["question_type"] == "mcq":
-            if not opt_items:
-                parts.append(Paragraph("Options: not available", small_style))
-            if not q["selected_option"]:
-                parts.append(Paragraph("<b>Selected option:</b> Not answered", small_style))
-        else:
-            parts.append(Paragraph("<b>Student answer:</b> " + escape(pdf_text(q["answer_text"] or "Not answered")), small_style))
-        awarded = q["final_marks"] if q["final_marks"] is not None else (q["ai_marks"] or 0)
-        parts.append(Paragraph(f'<b>Marks awarded:</b> {float(awarded):g} / {float(q["maximum_marks"]):g}', small_style))
-        story.append(KeepTogether(parts))
-        story.append(Spacer(1, 10))
-    doc.build(story, onFirstPage=add_pdf_branding, onLaterPages=add_pdf_branding)
-    buffer.seek(0)
+    buffer = _build_individual_marks_pdf(
+        result["student_name"], result["student_class"], result["exam_title"],
+        marks["total_marks"], marks["obtained_marks"], question_rows,
+        result.get("submitted_at")
+    )
     safe_name = "".join(ch for ch in str(result["student_name"]) if ch.isalnum() or ch in (" ", "-", "_")).strip().replace(" ", "_") or "student"
-    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=f"{safe_name}_exam_result.pdf")
+    response = send_file(buffer, mimetype="application/pdf", as_attachment=True,
+                         download_name=f"{safe_name}_individual_marks.pdf")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.get("/api/admin/pdfs/status")
