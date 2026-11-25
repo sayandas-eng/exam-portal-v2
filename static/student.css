@@ -61,3 +61,16 @@ input,textarea,select{font-size:16px}
 /* Refined tuition brand styling to match the portal's visual identity */
 .tuition-name{font:800 18px Manrope,sans-serif;color:#20243a;background:transparent;border:0;border-left:3px solid #5148d9;border-radius:0;padding:7px 16px;letter-spacing:-.25px;box-shadow:none}
 @media(max-width:700px){.tuition-name{font-size:16px;padding:7px 10px;text-align:center}}
+
+.result-detail{margin-top:22px;background:#fff;border:1px solid #e8eaf1;border-radius:16px;padding:22px;box-shadow:0 5px 20px #262b4807}
+.result-detail-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
+.result-detail-head h2{font:800 22px Manrope;margin:0 0 5px}.result-detail-head p:not(.eyebrow){font-size:12px;color:#858a9c;margin:0}
+.review-title{font:700 17px Manrope;margin:24px 0 10px}
+.review-q-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.review-status{font-size:10px;font-weight:700;padding:5px 9px;border-radius:20px}
+.review-status.good{background:#eaf8f0;color:#238454}.review-status.partial{background:#fff5e8;color:#a66b1b}.review-status.bad{background:#fff0ef;color:#b33e37}
+.result-question h4{font:700 14px/1.5 Manrope;color:#262a40;margin:10px 0}
+.review-option{padding:8px 10px;margin:5px 0;border:1px solid #e8eaf1;border-radius:8px;font-size:12px;color:#60657a}
+.review-option.is-correct{background:#eaf8f0;border-color:#b8e5ca;color:#176b43}.review-option.is-selected:not(.is-correct){background:#fff0ef;border-color:#f2c4c0;color:#a6322b}
+.result-wait{font-size:12px;color:#8a8fa1}
+@media(max-width:600px){.result-detail{padding:16px}.result-detail-head{align-items:stretch;flex-direction:column}.result-detail-head .button{width:100%;text-align:center}.result-detail-head h2{font-size:19px}}
