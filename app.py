@@ -839,8 +839,8 @@ def _student_result_attempt(cur, attempt_id):
         SELECT a.id, a.status, a.student_name, a.student_class, a.started_at,
                a.submitted_at, a.evaluated_at, e.title AS exam_title,
                e.subject, e.total_marks,
-               a.submitted_at + interval '5 minutes' AS result_available_at,
-               a.submitted_at + interval '53 hours' AS result_expires_at,
+               a.submitted_at + interval '2 hours' AS result_available_at,
+               a.submitted_at + interval '50 hours' AS result_expires_at,
                COALESCE((SELECT SUM(ev.final_marks)
                          FROM portal_v2_evaluations ev
                          WHERE ev.attempt_id=a.id), 0)::float AS obtained_marks
@@ -879,7 +879,7 @@ def _student_result_gate(attempt):
     available_at = attempt["result_available_at"]
     expires_at = attempt["result_expires_at"]
     if now < available_at:
-        return error("Your result will be available five minutes after submission.", 425)
+        return error("Your result will be available two hours after submission.", 425)
     if now >= expires_at:
         return error("The 48-hour student result access period has ended.", 410)
     return None
@@ -1050,8 +1050,8 @@ def student_attempts():
         cur.execute("""
             SELECT a.id, a.status, a.started_at, a.submitted_at, a.evaluated_at,
                    e.title AS exam_title, e.subject, e.total_marks,
-                   a.submitted_at + interval '5 minutes' AS result_available_at,
-                   a.submitted_at + interval '53 hours' AS result_expires_at,
+                   a.submitted_at + interval '2 hours' AS result_available_at,
+                   a.submitted_at + interval '50 hours' AS result_expires_at,
                    CASE WHEN a.status='evaluated' THEN
                      COALESCE((SELECT SUM(ev.final_marks)
                                FROM portal_v2_evaluations ev
@@ -1065,7 +1065,7 @@ def student_attempts():
                 a.status='in_progress'
                 OR (a.status IN ('submitted', 'evaluated')
                     AND a.submitted_at IS NOT NULL
-                    AND now() < a.submitted_at + interval '53 hours')
+                    AND now() < a.submitted_at + interval '50 hours')
               )
             ORDER BY a.started_at DESC
         """, (session["student_name"], session["student_class"]))
