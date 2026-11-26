@@ -87,3 +87,15 @@ header{gap:24px}
 .exam-delete{background:#fff5f4;border:1px solid #f3d0cc;color:#b42318}
 .exam-delete:hover{background:#ffebe9}
 .exam-delete:disabled{opacity:.6;cursor:wait}
+
+
+.activity-count{display:inline-flex;min-width:24px;justify-content:center;padding:3px 7px;border-radius:999px;background:#fff3d8;color:#8a5b08;font-weight:800}
+.activity-report{margin:22px 0;padding:18px;border:1px solid #dbe4f0;border-radius:14px;background:#f8fafc}
+.activity-report-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.activity-report h3{margin:0 0 5px;font-size:16px;color:#17365f}
+.activity-report p{margin:0;color:#64748b;font-size:12px;line-height:1.5}
+.activity-report-head strong{font-size:13px;color:#17365f}
+#activity-events{list-style:none;padding:0;margin:14px 0 0}
+#activity-events li{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid #e2e8f0;font-size:13px;color:#334155}
+#activity-events time{white-space:nowrap;color:#64748b;font-size:12px}
+#activity-events .activity-empty{color:#64748b}
