@@ -82,9 +82,8 @@
   if(document.fullscreenElement)hadFullscreen=true;
   else if(hadFullscreen){hadFullscreen=false;logExamActivity("fullscreen_exit")}
  });
- window.addEventListener("beforeunload",event=>{
-  if(!monitoringActive)return;
-  logExamActivity("navigation_warning");event.preventDefault();event.returnValue="";
+ window.addEventListener("beforeunload",()=>{
+  if(monitoringActive)logExamActivity("navigation_warning");
  });
  async function api(url,opts={}){const headers={"Content-Type":"application/json",...(opts.headers||{})};if(csrfToken)headers["X-CSRF-Token"]=csrfToken;const r=await fetch(url,{...opts,headers});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||"Request failed");return d}
  function showAccount(user){student=user;$("#auth-screen").classList.add("hidden");$("#listing-screen").classList.remove("hidden");$("#student-greeting").textContent=user.full_name+" · "+user.student_class;$("#logout").classList.remove("hidden");loadExams();loadHistory()}
