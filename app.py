@@ -56,6 +56,7 @@ def db():
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS availability_days INTEGER NOT NULL DEFAULT 3")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_until TIMESTAMPTZ")
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS available_from TIMESTAMPTZ")
+        conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS target_classes JSONB")
         # Stable keys make exam creation safe to retry after transient throttling.
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS idempotency_key TEXT")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS portal_v2_exams_idempotency_key_uidx ON portal_v2_exams (idempotency_key) WHERE idempotency_key IS NOT NULL")
@@ -216,6 +217,59 @@ def normalize_student_class(value):
     return f"Class {match.group(1)}" if match else ""
 
 
+
+def normalize_exam_target_classes(target_classes=None, target_class=None):
+    """Return allowed classes, or None for unrestricted legacy exams."""
+    import re
+
+    supplied = target_classes if target_classes is not None else target_class
+    if supplied is None or supplied == "":
+        return None
+
+    if isinstance(supplied, list):
+        if not supplied:
+            raise ValueError("Specify at least one eligible class, or omit the class restriction.")
+        normalized = []
+        for item in supplied:
+            value = item if isinstance(item, str) else f"Class {item}"
+            class_name = normalize_student_class(value)
+            if not class_name:
+                raise ValueError(f"Invalid eligible class: {item}")
+            normalized.append(class_name)
+        return sorted(set(normalized), key=lambda value: int(value.split()[1]))
+
+    if not isinstance(supplied, str):
+        raise ValueError("Eligible classes must be a class list or a class-range description.")
+
+    raw = supplied.strip()
+    if not raw:
+        return None
+    parts = re.split(r"\b(?:excluding|except|but\s+not|not\s+including)\b", raw, maxsplit=1, flags=re.IGNORECASE)
+    include_text = parts[0]
+    exclude_text = parts[1] if len(parts) > 1 else ""
+
+    def extract_numbers(value):
+        found = []
+        def replace_range(match):
+            start, end = int(match.group(1)), int(match.group(2))
+            if not (1 <= start <= 12 and 1 <= end <= 12) or end < start:
+                raise ValueError("Class ranges must be in ascending order between Class 1 and Class 12.")
+            found.extend(range(start, end + 1))
+            return " "
+        remainder = re.sub(r"(?<!\d)(1[0-2]|[1-9])\s*(?:-|–|to)\s*(1[0-2]|[1-9])(?!\d)", replace_range, value, flags=re.IGNORECASE)
+        found.extend(int(number) for number in re.findall(r"(?<!\d)(1[0-2]|[1-9])(?!\d)", remainder))
+        return set(found)
+
+    included = extract_numbers(include_text)
+    excluded = extract_numbers(exclude_text) if exclude_text else set()
+    allowed = included - excluded
+    if not included:
+        raise ValueError("Could not understand eligible classes. Use Class 6, Class 5 or Class 7-10, for example.")
+    if not allowed:
+        raise ValueError("The class restriction excludes every selected class.")
+    return [f"Class {number}" for number in sorted(allowed)]
+
+
 @app.before_request
 def protect_student_mutations():
     if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
@@ -316,7 +370,7 @@ def public_exams():
         return error("Student sign-in required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT e.id, e.title, e.subject, NULL::text AS target_class, e.topic, e.difficulty,
+            SELECT e.id, e.title, e.subject, e.target_class, e.target_classes, e.topic, e.difficulty,
                    e.duration_minutes, e.review_minutes, e.total_marks, e.published_at,
                    e.available_from, e.available_until, true AS has_password,
                    EXISTS (
@@ -335,8 +389,9 @@ def public_exams():
                    ) AS already_started
             FROM portal_v2_exams e
             WHERE e.status = 'live' AND e.available_from <= now() AND now() < e.available_until
+              AND (e.target_classes IS NULL OR e.target_classes ? %s)
             ORDER BY e.published_at DESC NULLS LAST
-        """, (session["student_name"], session["student_class"],
+        """, (session["student_class"], session["student_name"], session["student_class"],
               session["student_name"], session["student_class"]))
         return jsonify({"ok": True, "exams": cur.fetchall()})
 
@@ -347,7 +402,7 @@ def admin_list_exams():
         return error("Admin authentication required", 401)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT e.id, e.title, e.subject, e.target_class, e.topic,
+            SELECT e.id, e.title, e.subject, e.target_class, e.target_classes, e.topic,
                    e.difficulty, CASE WHEN e.status='live' AND e.available_until <= now() THEN 'closed' ELSE e.status END AS status, e.duration_minutes, e.review_minutes,
                    e.total_marks, e.created_at, e.published_at,
                    e.availability_days, e.available_from, e.available_until,
@@ -390,6 +445,10 @@ def create_exam():
         if not 1 <= duration <= 300 or not 0 <= review <= 120:
             return error("Duration must be 1–300 minutes; review time 0–120")
         total = sum(float(q.get("marks", 1)) for q in questions)
+        allowed_classes = normalize_exam_target_classes(data.get("target_classes"), data.get("target_class"))
+        target_class_label = data.get("target_class")
+        if allowed_classes is not None and not target_class_label:
+            target_class_label = ", ".join(allowed_classes)
         exam_id = str(uuid.uuid4())
         if not STUDENT_EXAM_PASSWORD:
             return error("STUDENT_EXAM_PASSWORD is not configured on the server", 500)
@@ -431,11 +490,12 @@ def create_exam():
                                     "idempotent_replay": True}), 200
             cur.execute("""
                 INSERT INTO portal_v2_exams
-                (id, title, subject, target_class, topic, difficulty, status,
+                (id, title, subject, target_class, target_classes, topic, difficulty, status,
                  exam_password_hash, duration_minutes, review_minutes, total_marks, availability_days,
                  available_from, available_until, idempotency_key)
-                VALUES (%s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (exam_id, data["title"], data["subject"], data.get("target_class"),
+                VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (exam_id, data["title"], data["subject"], target_class_label,
+                  __import__("json").dumps(allowed_classes) if allowed_classes is not None else None,
                   data["topic"], data.get("difficulty", "moderate"), password_hash,
                   duration, review, total, availability_days, availability_start, availability_end, idempotency_key))
             for index, q in enumerate(questions, start=1):
@@ -602,7 +662,7 @@ def start_exam(exam_id):
                 return error("You have already started this exam. Please resume your existing attempt from My examinations.", 409)
             return error("You have already submitted this exam. Each student can take an exam only once.", 409)
         cur.execute("""
-            SELECT id, target_class, exam_password_hash, duration_minutes, review_minutes, available_from,
+            SELECT id, target_class, target_classes, exam_password_hash, duration_minutes, review_minutes, available_from,
                    available_until, available_until AS student_until
             FROM portal_v2_exams WHERE id=%s AND status='live' AND available_from <= now()
               AND now() < available_until
@@ -610,6 +670,8 @@ def start_exam(exam_id):
         exam = cur.fetchone()
         if not exam:
             return error("Exam not found or not currently live", 404)
+        if exam.get("target_classes") is not None and student_class not in exam["target_classes"]:
+            return error("This examination is available only to the classes specified by the teacher.", 403)
         if exam["student_until"] <= datetime.now(timezone.utc):
             return error("The student examination window has closed. The remaining time is reserved for teacher review.", 403)
         session_id = str(uuid.uuid4())
