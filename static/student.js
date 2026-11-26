@@ -146,7 +146,7 @@
     }).join("");
     const studentAnswer=q.question_type==="mcq"?(q.selected_option||"Not answered"):(q.answer_text||"Not answered");
     const correctAnswer=q.question_type==="mcq"?(q.correct_option||"Not configured"):(q.expected_answer||"No reference answer configured");
-    return '<article class="result-question"><div class="review-q-head"><strong>Question '+(i+1)+'</strong><span class="review-status '+(q.answer_status==="Correct"?"good":q.answer_status==="Partially correct"?"partial":"bad")+'">'+esc(q.answer_status)+'</span></div><h4>'+esc(q.prompt)+'</h4>'+(q.question_type==="mcq"?optionRows:'')+'<p><b>Your answer:</b> '+esc(studentAnswer)+'</p><p><b>Correct / reference answer:</b> '+esc(correctAnswer)+'</p><p><b>Marks:</b> '+Number(q.awarded_marks).toFixed(2)+' / '+Number(q.maximum_marks).toFixed(2)+'</p>'+(q.feedback?'<p class="result-feedback">'+esc(q.feedback)+'</p>':'')+'</article>';
+    return '<article class="result-question"><div class="review-q-head"><strong>Question '+(i+1)+'</strong><span class="review-status '+(q.answer_status==="Correct"?"good":q.answer_status==="Partially correct"?"partial":"bad")+'">'+esc(q.answer_status)+'</span></div><h4>'+esc(q.prompt)+'</h4>'+(q.question_type==="mcq"?optionRows:'')+'<p><b>Your answer:</b> '+esc(studentAnswer)+'</p><p><b>Correct / reference answer:</b> '+esc(correctAnswer)+'</p><p><b>Marks:</b> '+Number(q.awarded_marks).toFixed(2)+' / '+Number(q.maximum_marks).toFixed(2)+'</p>'+'</article>';
    }).join("");
    detail.innerHTML=html;detail.classList.remove("hidden");detail.scrollIntoView({behavior:"smooth",block:"start"});
   }catch(e){notice(e.message)}
