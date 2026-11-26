@@ -1188,7 +1188,7 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         draw_text(c, 225, 1320, issue_date, 17, ink, "Helvetica")
         # Render the teacher's name as a fixed signature above the signature line.
         draw_text(c, 810, 1277, "Abhishek Santra", 27, ink,
-                  "ZapfChancery-Italic", "center")
+                  "Times-Italic", "center")
         draw_text(c, 722, 1320, "Signature of Teacher",
                   17, ink, "Helvetica-Bold")
 
