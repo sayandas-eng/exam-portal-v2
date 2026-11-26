@@ -1216,7 +1216,28 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         # Overall-result panel: reference-2 navy/gold treatment.
         # All displayed values remain calculated from this attempt's marks.
         draw_round(c, 48, 720, 458, 340, 28, gold, gold, 1)
-        draw_round(c, 53, 725, 448, 330, 24, navy, gold_light, 1.2)
+        # Smooth emerald gradient, clipped to the existing rounded panel.
+        # Presentation-only fill: all result text and calculations stay dynamic.
+        c.saveState()
+        panel_path = c.beginPath()
+        panel_path.roundRect(px(53), page_h - (725 + 330) * sy,
+                             px(448), px(330), px(24))
+        c.clipPath(panel_path, stroke=0, fill=0)
+        top_rgb = (0.02, 0.31, 0.15)
+        bottom_rgb = (0.00, 0.12, 0.07)
+        bands = 180
+        band_h = 330.0 / bands
+        for band in range(bands):
+            t = band / max(1, bands - 1)
+            rgb = tuple(top_rgb[k] * (1 - t) + bottom_rgb[k] * t for k in range(3))
+            c.setFillColorRGB(*rgb)
+            y_top = 725 + band * band_h
+            c.rect(px(53), page_h - (y_top + band_h + 0.8) * sy, px(448), px(band_h + 0.8), fill=1, stroke=0)
+        c.restoreState()
+        c.setLineWidth(1.2 * sx)
+        c.setStrokeColor(gold_light)
+        c.roundRect(px(53), page_h - (725 + 330) * sy, px(448), px(330),
+                    px(24), fill=0, stroke=1)
 
         # Restrained curved corner accents from the reference design.
         p = c.beginPath()
