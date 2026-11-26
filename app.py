@@ -1045,12 +1045,6 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         draw_text(c, 242, 198,
             "MADHYAMIK   •   HIGHER SECONDARY   •   GHATAL, PASCHIM MEDINIPUR",
             17, pale, "Helvetica", max_width=735)
-        # Fixed AI sparkle mark, drawn as vector lines to avoid font glyph issues.
-        c.setStrokeColor(pale); c.setLineWidth(2.2 * sx)
-        for cx, cy, radius in ((944, 34, 10), (965, 23, 5)):
-            c.line(px(cx-radius), py(cy), px(cx+radius), py(cy))
-            c.line(px(cx), py(cy-radius), px(cx), py(cy+radius))
-        draw_text(c, 990, 57, "AI", 25, pale, "Helvetica-Bold", "right")
 
         draw_text(c, 512, 354, "R E S U L T   S H E E T", 45, ink, "Times-Bold", "center")
         draw_line(c, 50, 355, 265, 355, gold, 2)
@@ -1190,7 +1184,12 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         draw_line(c, 50, 1287, 438, 1287, ink, 2)
         draw_line(c, 642, 1287, 974, 1287, ink, 2)
         draw_text(c, 78, 1320, "DATE OF ISSUE:", 17, ink, "Helvetica-Bold")
-        draw_text(c, 722, 1320, "A B H I S H E K   S A N T R A",
+        issue_date = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %B %Y")
+        draw_text(c, 225, 1320, issue_date, 17, ink, "Helvetica")
+        # Render the teacher's name as a fixed signature above the signature line.
+        draw_text(c, 810, 1277, "Abhishek Santra", 27, ink,
+                  "ZapfChancery-Italic", "center")
+        draw_text(c, 722, 1320, "Signature of Teacher",
                   17, ink, "Helvetica-Bold")
 
         # Bottom gold wave and navy footer.
@@ -1279,12 +1278,6 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         draw_text(c, 242, 198,
             "MADHYAMIK   •   HIGHER SECONDARY   •   GHATAL, PASCHIM MEDINIPUR",
             17, pale, "Helvetica", max_width=735)
-        # Fixed AI sparkle mark, drawn as vector lines to avoid font glyph issues.
-        c.setStrokeColor(pale); c.setLineWidth(2.2 * sx)
-        for cx, cy, radius in ((944, 34, 10), (965, 23, 5)):
-            c.line(px(cx-radius), py(cy), px(cx+radius), py(cy))
-            c.line(px(cx), py(cy-radius), px(cx), py(cy+radius))
-        draw_text(c, 990, 57, "AI", 25, pale, "Helvetica-Bold", "right")
 
         # Footer: matching gold wave and navy band on every continuation page.
         p = c.beginPath()
