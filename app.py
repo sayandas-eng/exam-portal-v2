@@ -391,8 +391,8 @@ def public_exams():
             WHERE e.status = 'live' AND e.available_from <= now() AND now() < e.available_until
               AND (e.target_classes IS NULL OR e.target_classes ? %s)
             ORDER BY e.published_at DESC NULLS LAST
-        """, (session["student_class"], session["student_name"], session["student_class"],
-              session["student_name"], session["student_class"]))
+        """, (session["student_name"], session["student_class"],
+              session["student_name"], session["student_class"], session["student_class"]))
         return jsonify({"ok": True, "exams": cur.fetchall()})
 
 
@@ -447,7 +447,9 @@ def create_exam():
         total = sum(float(q.get("marks", 1)) for q in questions)
         allowed_classes = normalize_exam_target_classes(data.get("target_classes"), data.get("target_class"))
         target_class_label = data.get("target_class")
-        if allowed_classes is not None and not target_class_label:
+        if allowed_classes is not None and not isinstance(target_class_label, str):
+            target_class_label = ", ".join(allowed_classes)
+        elif allowed_classes is not None and not target_class_label.strip():
             target_class_label = ", ".join(allowed_classes)
         exam_id = str(uuid.uuid4())
         if not STUDENT_EXAM_PASSWORD:
