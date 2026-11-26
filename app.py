@@ -979,7 +979,6 @@ def _student_result_questions(cur, attempt_id):
                q.options, q.correct_option, q.expected_answer,
                q.marks AS maximum_marks, ans.answer_text, ans.selected_option,
                COALESCE(ev.final_marks, ev.ai_marks, 0)::float AS awarded_marks,
-               COALESCE(ev.teacher_feedback, ev.ai_feedback, '') AS feedback
         FROM portal_v2_questions q
         JOIN portal_v2_attempts a ON a.exam_id=q.exam_id
         LEFT JOIN portal_v2_answers ans
@@ -1540,9 +1539,6 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
             f'<b>Evaluation:</b> {escape(status)} &nbsp;&nbsp; '
             f'<b>Marks awarded:</b> {awarded:g} / {maximum:g}', detail_style
         ))
-        feedback = q.get("feedback") or q.get("teacher_feedback") or q.get("ai_feedback")
-        if feedback:
-            parts.append(Paragraph("<b>Feedback:</b> " + escape(clean(feedback)), detail_style))
         story.append(KeepTogether(parts))
         story.append(Spacer(1, 9))
 
