@@ -1232,7 +1232,7 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
             rgb = tuple(top_rgb[k] * (1 - t) + bottom_rgb[k] * t for k in range(3))
             c.setFillColorRGB(*rgb)
             y_top = 725 + band * band_h
-            draw_rect(c, 53, y_top, 448, band_h + 0.8, c._fillColor)
+            c.rect(px(53), page_h - (y_top + band_h + 0.8) * sy, px(448), px(band_h + 0.8), fill=1, stroke=0)
         c.restoreState()
         c.setLineWidth(1.2 * sx)
         c.setStrokeColor(gold_light)
