@@ -1677,7 +1677,7 @@ def teacher_exam_overview():
     with db() as conn, conn.cursor() as cur:
         _apply_teacher_exam_visibility_cleanup(cur)
         cur.execute("""
-            SELECT e.id, e.title, e.subject, e.status, e.available_from, e.available_until,
+            SELECT e.id, e.title, e.subject, e.target_class, e.target_classes, e.status, e.available_from, e.available_until,
                    COUNT(a.id) FILTER (
                        WHERE a.status IN ('submitted', 'evaluated')
                          AND a.submitted_at IS NOT NULL
