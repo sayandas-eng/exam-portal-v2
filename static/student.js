@@ -3,6 +3,88 @@
  let exams=[],student=null,selected=null,attempt=null,questions=[],answers={},index=0,deadline=0,ticker=null,resultTicker=null,saving=Promise.resolve(),submitting=false;
  const notice=t=>{const el=$("#auth-screen").classList.contains("hidden")?$("#message"):$("#auth-message");el.textContent=t;el.classList.add("show")};
  let csrfToken="",saveQueue=Promise.resolve();
+ let monitoringActive=false,wasHidden=false,hadFullscreen=false,activityChannel=null,activityTabId="";
+ const activityCooldown={};
+ async function logExamActivity(eventType){
+  if(!monitoringActive||!attempt?.id)return;
+  const now=Date.now();
+  if(activityCooldown[eventType]&&now-activityCooldown[eventType]<1500)return;
+  activityCooldown[eventType]=now;
+  try{await api("/api/attempts/"+encodeURIComponent(attempt.id)+"/activity",{method:"POST",body:JSON.stringify({event_type:eventType}),keepalive:true})}catch(_){}
+ }
+ function startExamMonitoring(){
+  monitoringActive=true;wasHidden=false;hadFullscreen=!!document.fullscreenElement;
+  activityTabId=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random();
+  if("BroadcastChannel" in window){
+   try{
+    if(activityChannel)activityChannel.close();
+    activityChannel=new BroadcastChannel("exam-attempt-"+attempt.id);
+    activityChannel.onmessage=event=>{
+     if(event.data&&event.data.type==="exam-tab-opened"&&event.data.tabId!==activityTabId){
+      logExamActivity("multiple_tab_detected");
+      $("#integrity-notice").textContent="Another tab for this examination was detected. This activity has been recorded.";
+      $("#integrity-notice").classList.add("warning");
+     }
+    };
+    activityChannel.postMessage({type:"exam-tab-opened",tabId:activityTabId});
+   }catch(_){}
+  }
+ }
+ function stopExamMonitoring(){
+  monitoringActive=false;
+  if(activityChannel){try{activityChannel.close()}catch(_){}activityChannel=null}
+ }
+ document.addEventListener("visibilitychange",()=>{
+  if(!monitoringActive)return;
+  if(document.hidden){wasHidden=true;logExamActivity("tab_hidden")}
+  else if(wasHidden){
+   wasHidden=false;logExamActivity("tab_returned");
+   $("#integrity-notice").textContent="Leaving the exam tab or switching apps was detected and recorded. Please remain on the examination page.";
+   $("#integrity-notice").classList.add("warning");
+  }
+ });
+ window.addEventListener("blur",()=>{
+  if(monitoringActive&&!document.hidden)logExamActivity("window_blur");
+ });
+ document.addEventListener("copy",event=>{
+  if(!monitoringActive)return;event.preventDefault();logExamActivity("copy_blocked");
+  $("#integrity-notice").textContent="Copying is disabled during the examination. This attempt has been recorded.";
+  $("#integrity-notice").classList.add("warning");
+ },true);
+ document.addEventListener("cut",event=>{
+  if(!monitoringActive)return;event.preventDefault();logExamActivity("cut_blocked");
+  $("#integrity-notice").textContent="Cutting text is disabled during the examination. This attempt has been recorded.";
+  $("#integrity-notice").classList.add("warning");
+ },true);
+ document.addEventListener("paste",event=>{
+  if(!monitoringActive)return;event.preventDefault();logExamActivity("paste_blocked");
+  $("#integrity-notice").textContent="Pasting is disabled during the examination. This attempt has been recorded.";
+  $("#integrity-notice").classList.add("warning");
+ },true);
+ document.addEventListener("contextmenu",event=>{
+  if(!monitoringActive)return;event.preventDefault();logExamActivity("context_menu");
+ },true);
+ document.addEventListener("keydown",event=>{
+  if(!monitoringActive)return;
+  const key=String(event.key||"").toLowerCase(),mod=event.ctrlKey||event.metaKey;
+  if(key==="printscreen"){event.preventDefault();logExamActivity("print_screen_key");return}
+  if(key==="f12"||(mod&&event.shiftKey&&["i","j","c"].includes(key))){
+   event.preventDefault();logExamActivity("devtools_shortcut");return;
+  }
+  if(mod&&["c","v","x","p","s","u"].includes(key)){
+   event.preventDefault();
+   logExamActivity(key==="c"?"copy_blocked":key==="v"?"paste_blocked":key==="x"?"cut_blocked":key==="p"?"print_attempt":"blocked_shortcut");
+  }
+ },true);
+ window.addEventListener("beforeprint",()=>{if(monitoringActive)logExamActivity("print_attempt")});
+ document.addEventListener("fullscreenchange",()=>{
+  if(!monitoringActive)return;
+  if(document.fullscreenElement)hadFullscreen=true;
+  else if(hadFullscreen){hadFullscreen=false;logExamActivity("fullscreen_exit")}
+ });
+ window.addEventListener("beforeunload",()=>{
+  if(monitoringActive)logExamActivity("navigation_warning");
+ });
  async function api(url,opts={}){const headers={"Content-Type":"application/json",...(opts.headers||{})};if(csrfToken)headers["X-CSRF-Token"]=csrfToken;const r=await fetch(url,{...opts,headers});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||"Request failed");return d}
  function showAccount(user){student=user;$("#auth-screen").classList.add("hidden");$("#listing-screen").classList.remove("hidden");$("#student-greeting").textContent=user.full_name+" · "+user.student_class;$("#logout").classList.remove("hidden");loadExams();loadHistory()}
  async function authSubmit(form){const button=form.querySelector('button[type="submit"]');button.disabled=true;button.textContent="Signing in…";try{const data=Object.fromEntries(new FormData(form));const d=await api("/api/student/login",{method:"POST",body:JSON.stringify(data)});csrfToken=d.csrf_token||"";form.reset();showAccount(d.student)}catch(e){notice(e.message)}finally{button.disabled=false;button.textContent="Sign in →"}}
@@ -79,6 +161,8 @@
    attempt=d.attempt;questions=d.questions||[];if(!questions.length)throw new Error("The question paper could not be loaded. Your attempt is still saved; please retry resuming.");answers={};questions.forEach(q=>{if(q.answer_text||q.selected_option)answers[q.id]={answer_text:q.answer_text,selected_option:q.selected_option}});
    index=0;deadline=new Date(attempt.review_deadline||attempt.exam_deadline).getTime();selected={title:attempt.title,subject:attempt.subject,topic:attempt.topic};
    $("#listing-screen").classList.add("hidden");$("#exam-screen").classList.remove("hidden");$("#exam-title").textContent=selected.title;$("#exam-subject").textContent=selected.subject+" · "+selected.topic;$("#student-label").textContent=student.full_name+" · "+student.student_class;
+   $("#integrity-notice").textContent="Exam activity monitoring is active. Suspicious browser activity may be recorded for teacher review.";
+   $("#integrity-notice").classList.remove("warning");startExamMonitoring();
    render();if(ticker)clearInterval(ticker);ticker=setInterval(tick,1000);tick();
   }catch(e){notice(e.message);loadHistory()}
   finally{if(button){button.disabled=false;button.textContent="Resume exam →"}}
@@ -89,7 +173,7 @@
  $("#reload").onclick=loadExams;
  $("#exam-list").onclick=e=>{const b=e.target.closest("[data-start]");if(!b)return;selected=exams.find(x=>x.id===b.dataset.start);$("#dialog-title").textContent=selected.title;$("#dialog-info").textContent=selected.subject+" · "+selected.duration_minutes+" minutes · "+selected.total_marks+" marks";$("#start-dialog").showModal()};
  $("#close-dialog").onclick=()=>$("#start-dialog").close();
- $("#start-form").onsubmit=async e=>{e.preventDefault();const form=new FormData(e.currentTarget),b=e.submitter;b.disabled=true;b.textContent="Starting…";try{const d=await api("/api/exams/"+selected.id+"/start",{method:"POST",body:JSON.stringify({})});attempt=d.attempt;questions=d.questions||[];if(!questions.length)throw new Error("This examination has no questions available. Your attempt has not been discarded.");answers={};index=0;deadline=new Date(attempt.review_deadline||attempt.exam_deadline).getTime();$("#start-dialog").close();$("#listing-screen").classList.add("hidden");$("#exam-screen").classList.remove("hidden");$("#exam-title").textContent=selected.title;$("#exam-subject").textContent=selected.subject+" · "+selected.topic;$("#student-label").textContent=student.full_name+" · "+student.student_class;render();ticker=setInterval(tick,1000);tick()}catch(err){notice(err.message)}finally{b.disabled=false;b.textContent="Start examination →"}};
+ $("#start-form").onsubmit=async e=>{e.preventDefault();const form=new FormData(e.currentTarget),b=e.submitter;b.disabled=true;b.textContent="Starting…";try{const d=await api("/api/exams/"+selected.id+"/start",{method:"POST",body:JSON.stringify({})});attempt=d.attempt;questions=d.questions||[];if(!questions.length)throw new Error("This examination has no questions available. Your attempt has not been discarded.");answers={};index=0;deadline=new Date(attempt.review_deadline||attempt.exam_deadline).getTime();$("#start-dialog").close();$("#listing-screen").classList.add("hidden");$("#exam-screen").classList.remove("hidden");$("#exam-title").textContent=selected.title;$("#exam-subject").textContent=selected.subject+" · "+selected.topic;$("#student-label").textContent=student.full_name+" · "+student.student_class;$("#integrity-notice").textContent="Exam activity monitoring is active. Suspicious browser activity may be recorded for teacher review.";$("#integrity-notice").classList.remove("warning");startExamMonitoring();render();ticker=setInterval(tick,1000);tick()}catch(err){notice(err.message)}finally{b.disabled=false;b.textContent="Start examination →"}};
  function answered(a){return !!(a&&(a.answer_text&&a.answer_text.trim()||a.selected_option))}
  function render(){const q=questions[index];if(!q){$("#question-prompt").textContent="The question paper could not be loaded. Your saved answers are preserved. Please return to the examination list and resume.";$("#answer-area").innerHTML="";$("#previous").disabled=true;$("#next").disabled=true;return}$("#next").disabled=false;$("#question-count").textContent="QUESTION "+(index+1)+" OF "+questions.length;$("#question-marks").textContent=q.marks+" marks";$("#question-prompt").textContent=q.prompt;$("#progress-fill").style.width=((index+1)/questions.length*100)+"%";$("#question-nav").innerHTML=questions.map((x,i)=>'<button class="nav-q '+(i===index?"current ":"")+(answered(answers[x.id])?"answered":"")+'" data-index="'+i+'">'+(i+1)+'</button>').join("");const a=answers[q.id]||{};if(q.question_type==="mcq"){const opts=Array.isArray(q.options)?q.options:[];$("#answer-area").innerHTML=opts.map((o,i)=>'<label class="answer-option"><input type="radio" name="answer" value="'+String.fromCharCode(65+i)+'" '+(a.selected_option===String.fromCharCode(65+i)?"checked":"")+'><span><b>'+String.fromCharCode(65+i)+'.</b> '+esc(o)+'</span></label>').join("")}else{$("#answer-area").innerHTML='<textarea class="answer-text" id="written-answer" placeholder="Type your answer here…">'+esc(a.answer_text||"")+'</textarea>'}$("#previous").disabled=index===0;$("#next").textContent=index===questions.length-1?"Review answers":"Next question →";renderNavOnly()}
  async function saveCurrent(){
@@ -113,8 +197,8 @@
  $("#question-nav").onclick=async e=>{const b=e.target.closest("[data-index]");if(!b)return;try{await saveCurrent();index=Number(b.dataset.index);render()}catch(_){}};
  $("#previous").onclick=async()=>{try{await saveCurrent();index=Math.max(0,index-1);render()}catch(_){}};
  $("#next").onclick=async()=>{try{await saveCurrent();index=Math.min(questions.length-1,index+1);render()}catch(_){}};
- $("#back").onclick=()=>{if(confirm("Exit this exam? Your saved answers remain, but the timer continues.")){clearInterval(ticker);$("#exam-screen").classList.add("hidden");$("#listing-screen").classList.remove("hidden")}};
- async function submit(auto=false){if(submitting)return;submitting=true;try{if(auto){await saving}else{await saveCurrent();await saving;if(!confirm("Submit your examination now? You cannot change answers afterwards.")){submitting=false;return}}await api("/api/attempts/"+attempt.id+"/submit",{method:"POST",body:"{}"});clearInterval(ticker);$("#exam-screen").classList.add("hidden");$("#done-screen").classList.remove("hidden");$("#done-copy").textContent=auto?"The time limit ended and your exam was submitted.":"Your answers have been submitted successfully. Your result and complete answer review will appear in the View Result section 2 hours after submission. You will have 48 hours from then to view and download it.";loadExams();loadHistory();}catch(e){notice(e.message);submitting=false}}
+ $("#back").onclick=async()=>{if(confirm("Exit this exam? Your saved answers remain, but the timer continues.")){await logExamActivity("navigation_warning");stopExamMonitoring();clearInterval(ticker);$("#exam-screen").classList.add("hidden");$("#listing-screen").classList.remove("hidden")}};
+ async function submit(auto=false){if(submitting)return;submitting=true;try{if(auto){await saving}else{await saveCurrent();await saving;if(!confirm("Submit your examination now? You cannot change answers afterwards.")){submitting=false;return}}await api("/api/attempts/"+attempt.id+"/submit",{method:"POST",body:"{}"});stopExamMonitoring();clearInterval(ticker);$("#exam-screen").classList.add("hidden");$("#done-screen").classList.remove("hidden");$("#done-copy").textContent=auto?"The time limit ended and your exam was submitted.":"Your answers have been submitted successfully. Your result and complete answer review will appear in the View Result section 2 hours after submission. You will have 48 hours from then to view and download it.";loadExams();loadHistory();}catch(e){notice(e.message);submitting=false}}
  $("#submit").onclick=()=>submit(false);
  function tick(){const left=Math.max(0,deadline-Date.now());$("#timer").textContent=String(Math.floor(left/60000)).padStart(2,"0")+":"+String(Math.floor(left%60000/1000)).padStart(2,"0");if(left<=0)submit(true)}
  async function init(){try{const d=await api("/api/student/me");csrfToken=d.csrf_token||"";showAccount(d.student)}catch(_){switchAuth("login")}}

@@ -59,6 +59,18 @@ def db():
         # Stable keys make exam creation safe to retry after transient throttling.
         conn.execute("ALTER TABLE portal_v2_exams ADD COLUMN IF NOT EXISTS idempotency_key TEXT")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS portal_v2_exams_idempotency_key_uidx ON portal_v2_exams (idempotency_key) WHERE idempotency_key IS NOT NULL")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS portal_v2_exam_activity (
+                id BIGSERIAL PRIMARY KEY,
+                attempt_id UUID NOT NULL REFERENCES portal_v2_attempts(id) ON DELETE CASCADE,
+                event_type TEXT NOT NULL,
+                occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS portal_v2_exam_activity_attempt_time_idx
+            ON portal_v2_exam_activity (attempt_id, occurred_at)
+        """)
         conn.execute("ALTER TABLE portal_v2_exams DROP CONSTRAINT IF EXISTS portal_v2_exams_status_check")
         conn.execute("""
             ALTER TABLE portal_v2_exams
@@ -665,6 +677,42 @@ def resume_attempt(attempt_id):
         """, (attempt_id, attempt["exam_id"]))
         questions = cur.fetchall()
     return jsonify({"ok": True, "attempt": attempt, "questions": questions})
+
+
+@app.post("/api/attempts/<attempt_id>/activity")
+@limiter.limit("120 per minute")
+def record_exam_activity(attempt_id):
+    if not student_required():
+        return error("Student sign-in required", 401)
+    data = request.get_json(silent=True) or {}
+    event_type = str(data.get("event_type", "")).strip().lower()
+    allowed_events = {
+        "tab_hidden", "tab_returned", "window_blur", "copy_blocked",
+        "paste_blocked", "cut_blocked", "context_menu", "print_screen_key",
+        "print_attempt", "devtools_shortcut", "blocked_shortcut",
+        "fullscreen_exit", "multiple_tab_detected", "navigation_warning"
+    }
+    if event_type not in allowed_events:
+        return error("Unsupported exam activity event")
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT status
+            FROM portal_v2_attempts
+            WHERE id=%s
+              AND lower(btrim(student_name))=lower(btrim(%s))
+              AND lower(btrim(student_class))=lower(btrim(%s))
+            FOR UPDATE
+        """, (attempt_id, session["student_name"], session["student_class"]))
+        attempt_row = cur.fetchone()
+        if not attempt_row:
+            return error("Attempt not found", 404)
+        if attempt_row["status"] != "in_progress":
+            return error("Activity can only be recorded during an active examination", 409)
+        cur.execute("""
+            INSERT INTO portal_v2_exam_activity (attempt_id, event_type)
+            VALUES (%s, %s)
+        """, (attempt_id, event_type))
+    return jsonify({"ok": True})
 
 
 @app.put("/api/attempts/<attempt_id>/answers/<question_id>")
@@ -1594,7 +1642,10 @@ def admin_list_attempts():
                    a.started_at, a.submitted_at, e.id AS exam_id,
                    e.title AS exam_title, e.subject, e.total_marks,
                    (e.pdf_enabled AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)) AS pdf_available,
-                   COALESCE(SUM(ev.final_marks), 0)::float AS obtained_marks
+                   COALESCE(SUM(ev.final_marks), 0)::float AS obtained_marks,
+                   (SELECT COUNT(*)::int FROM portal_v2_exam_activity act
+                    WHERE act.attempt_id=a.id
+                      AND act.event_type <> 'tab_returned') AS activity_count
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
@@ -1638,6 +1689,49 @@ def admin_attempt_detail(attempt_id):
             WHERE a.id=%s ORDER BY q.position
         """, (attempt_id,))
         return jsonify({"ok": True, "attempt": attempt, "questions": cur.fetchall()})
+
+
+@app.get("/api/admin/attempts/<attempt_id>/activity")
+def admin_attempt_activity(attempt_id):
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT a.id
+            FROM portal_v2_attempts a
+            WHERE a.id=%s
+        """, (attempt_id,))
+        if not cur.fetchone():
+            return error("Attempt not found", 404)
+        cur.execute("""
+            SELECT event_type, occurred_at
+            FROM portal_v2_exam_activity
+            WHERE attempt_id=%s
+            ORDER BY occurred_at ASC
+        """, (attempt_id,))
+        events = cur.fetchall()
+    labels = {
+        "tab_hidden": "Exam tab became hidden / app switch detected",
+        "tab_returned": "Student returned to the exam tab",
+        "window_blur": "Exam window lost focus",
+        "copy_blocked": "Copy attempt blocked",
+        "paste_blocked": "Paste attempt blocked",
+        "cut_blocked": "Cut attempt blocked",
+        "context_menu": "Right-click / context menu attempt",
+        "print_screen_key": "Print Screen key detected (where browser exposes it)",
+        "print_attempt": "Print dialog attempt",
+        "devtools_shortcut": "Developer-tools shortcut detected",
+        "blocked_shortcut": "Restricted keyboard shortcut detected",
+        "fullscreen_exit": "Fullscreen mode exited",
+        "multiple_tab_detected": "Another exam tab detected",
+        "navigation_warning": "Attempt to leave or reload the exam page"
+    }
+    return jsonify({
+        "ok": True,
+        "events": [{
+            "event_type": row["event_type"],
+            "label": labels.get(row["event_type"], row["event_type"]),
+            "occurred_at": row["occurred_at"]
+        } for row in events]
+    })
 
 
 @app.post("/api/admin/attempts/<attempt_id>/evaluate")
