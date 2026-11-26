@@ -25,13 +25,13 @@ async function loadExams(){
  }catch(error){wrap.innerHTML='<div class="empty exam-loading">Unable to load examinations.</div>';notice("Could not load examinations: "+error.message);}
 }
 async function load(){
- const body=$("#rows");body.innerHTML='<tr><td colspan="7" class="empty">Loading student submissions…</td></tr>';
+ const body=$("#rows");body.innerHTML='<tr><td colspan="8" class="empty">Loading student submissions…</td></tr>';
  if(!selectedExam)return;
  try{
   const data=await api("/api/admin/attempts?exam_id="+encodeURIComponent(selectedExam.id)+"&refresh="+Date.now());
   const attempts=data.attempts||[];
-  body.innerHTML=attempts.length?attempts.map(a=>'<tr><td><div class="student">'+esc(a.student_name)+'</div></td><td>'+esc(a.exam_title)+'</td><td>'+esc(a.student_class)+'</td><td>'+esc(a.submitted_at?new Date(a.submitted_at).toLocaleString():"—")+'</td><td><strong>'+Number(a.obtained_marks||0).toFixed(2).replace(/\.00$/,"")+' / '+Number(a.total_marks||0).toFixed(2).replace(/\.00$/,"")+'</strong></td><td><span class="activity-count">'+Number(a.activity_count||0)+'</span> flags</td><td>'+esc(a.status)+'</td><td>'+(["submitted","evaluated"].includes(a.status)?'<button class="open" data-open="'+esc(a.id)+'">Review →</button>':"—")+(a.status==="evaluated"&&a.pdf_available?' <a class="download" href="/api/admin/attempts/'+encodeURIComponent(a.id)+'/result.pdf">Download PDF</a>':"")+'</td></tr>').join(""):'<tr><td colspan="7" class="empty">No student submissions for this examination yet.</td></tr>';
- }catch(error){body.innerHTML='<tr><td colspan="7" class="empty">Unable to load submissions.</td></tr>';notice("Could not load submissions: "+error.message);}
+  body.innerHTML=attempts.length?attempts.map(a=>'<tr><td><div class="student">'+esc(a.student_name)+'</div></td><td>'+esc(a.exam_title)+'</td><td>'+esc(a.student_class)+'</td><td>'+esc(a.submitted_at?new Date(a.submitted_at).toLocaleString():"—")+'</td><td><strong>'+Number(a.obtained_marks||0).toFixed(2).replace(/\.00$/,"")+' / '+Number(a.total_marks||0).toFixed(2).replace(/\.00$/,"")+'</strong></td><td><span class="activity-count">'+Number(a.activity_count||0)+'</span> flags</td><td>'+esc(a.status)+'</td><td>'+(["submitted","evaluated"].includes(a.status)?'<button class="open" data-open="'+esc(a.id)+'">Review →</button>':"—")+(a.status==="evaluated"&&a.pdf_available?' <a class="download" href="/api/admin/attempts/'+encodeURIComponent(a.id)+'/result.pdf">Download PDF</a>':"")+'</td></tr>').join(""):'<tr><td colspan="8" class="empty">No student submissions for this examination yet.</td></tr>';
+ }catch(error){body.innerHTML='<tr><td colspan="8" class="empty">Unable to load submissions.</td></tr>';notice("Could not load submissions: "+error.message);}
 }
 async function enterExam(id){
  const data=await api("/api/teacher/exams?refresh="+Date.now());
