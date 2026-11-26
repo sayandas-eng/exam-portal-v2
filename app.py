@@ -1644,7 +1644,8 @@ def admin_list_attempts():
                    (e.pdf_enabled AND (e.pdf_cleared_at IS NULL OR a.submitted_at > e.pdf_cleared_at)) AS pdf_available,
                    COALESCE(SUM(ev.final_marks), 0)::float AS obtained_marks,
                    (SELECT COUNT(*)::int FROM portal_v2_exam_activity act
-                    WHERE act.attempt_id=a.id) AS activity_count
+                    WHERE act.attempt_id=a.id
+                      AND act.event_type <> 'tab_returned') AS activity_count
             FROM portal_v2_attempts a
             JOIN portal_v2_exams e ON e.id=a.exam_id
             LEFT JOIN portal_v2_evaluations ev ON ev.attempt_id=a.id
