@@ -1065,7 +1065,8 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         PageBreak, KeepTogether
     )
     from reportlab.pdfbase.pdfmetrics import stringWidth
-    from reportlab.lib.utils import simpleSplit
+    from reportlab.lib.utils import simpleSplit, ImageReader
+    import base64
     import unicodedata
 
     clean = lambda value: unicodedata.normalize("NFKC", str(value or "")).strip()
@@ -1212,9 +1213,24 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         draw_text(c, 756, 651, f"{percentage:.0f}%", 23, ink, "Times-Bold", "center")
         draw_text(c, 911, 651, grade, 23, ink, "Times-Bold", "center")
 
-        # Overall-result panel with clean spacing between heading and medal.
-        draw_round(c, 48, 720, 458, 340, 28, navy, navy, 1)
-        # Simple open-book emblem.
+        # Overall-result panel: reference-2 navy/gold treatment.
+        # All displayed values remain calculated from this attempt's marks.
+        draw_round(c, 48, 720, 458, 340, 28, gold, gold, 1)
+        draw_round(c, 53, 725, 448, 330, 24, navy, gold_light, 1.2)
+
+        # Restrained curved corner accents from the reference design.
+        p = c.beginPath()
+        p.moveTo(px(62), py(795))
+        p.curveTo(px(115), py(735), px(185), py(735), px(258), py(770))
+        c.setStrokeColor(gold_light); c.setLineWidth(2 * sx)
+        c.drawPath(p, stroke=1, fill=0)
+        p = c.beginPath()
+        p.moveTo(px(302), py(1037))
+        p.curveTo(px(380), py(1072), px(452), py(1065), px(492), py(1007))
+        c.setStrokeColor(gold_light); c.setLineWidth(2 * sx)
+        c.drawPath(p, stroke=1, fill=0)
+
+        # Open-book emblem and heading.
         c.setStrokeColor(gold_light); c.setLineWidth(3 * sx)
         c.line(px(277), py(770), px(277), py(792))
         c.line(px(277), py(770), px(259), py(764))
@@ -1227,7 +1243,8 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         c.line(px(306), py(787), px(277), py(795))
         draw_text(c, 277, 826, "O V E R A L L   R E S U L T",
                   21, pale, "Helvetica-Bold", "center")
-        # Balanced laurel branches, kept outside the percentage ring.
+
+        # Balanced laurel branches around the dynamically calculated result.
         for side in (-1, 1):
             for i in range(8):
                 yy = 1000 - i * 18
@@ -1238,7 +1255,19 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
                 c.setFillColor(gold_light)
                 c.ellipse(-px(4), -px(8), px(4), px(8), fill=1, stroke=0)
                 c.restoreState()
-        # Compact ribbon below the medal.
+
+        # Medal ring and dynamically calculated percentage.
+        c.setStrokeColor(gold_light); c.setLineWidth(12 * sx)
+        c.circle(px(277), py(940), px(88), stroke=1, fill=0)
+        draw_text(c, 277, 944, f"{percentage:.1f}%", 42, pale,
+                  "Times-Bold", "center")
+
+        # Gold grade capsule; grade is still derived by _result_grade().
+        draw_round(c, 205, 958, 144, 34, 17, gold_light, gold, 1)
+        draw_text(c, 277, 981, f"GRADE {grade}", 17, navy,
+                  "Helvetica-Bold", "center")
+
+        # Short medal ribbon below the ring.
         p = c.beginPath()
         p.moveTo(px(254), py(1008)); p.lineTo(px(276), py(1008))
         p.lineTo(px(270), py(1042)); p.lineTo(px(252), py(1033)); p.close()
@@ -1247,10 +1276,6 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
         p.moveTo(px(278), py(1008)); p.lineTo(px(300), py(1008))
         p.lineTo(px(302), py(1033)); p.lineTo(px(284), py(1042)); p.close()
         c.setFillColor(gold_light); c.drawPath(p, fill=1, stroke=0)
-        c.setStrokeColor(gold_light); c.setLineWidth(12 * sx)
-        c.circle(px(277), py(940), px(88), stroke=1, fill=0)
-        draw_text(c, 277, 944, f"{percentage:.1f}%", 42, pale, "Times-Bold", "center")
-        draw_text(c, 277, 976, f"GRADE {grade}", 20, gold_light, "Helvetica-Bold", "center")
 
         # Grade table is horizontally centered within its outer frame.
         draw_round(c, 522, 744, 454, 315, 26, pale, gold, 2)
@@ -1293,14 +1318,21 @@ def _build_individual_marks_pdf(student_name, student_class, exam_title,
                   25, ink, "Times-Bold", max_width=850)
         draw_line(c, 48, 1182, 976, 1182, line_grey, 1)
         draw_line(c, 48, 1218, 976, 1218, line_grey, 1)
-        draw_line(c, 50, 1287, 438, 1287, ink, 2)
-        draw_line(c, 642, 1287, 974, 1287, ink, 2)
-        draw_text(c, 78, 1320, "DATE OF ISSUE:", 17, ink, "Helvetica-Bold")
+        # Rounded date badge; date remains generated at PDF creation time in India.
         issue_date = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %B %Y")
-        draw_text(c, 225, 1320, issue_date, 17, ink, "Helvetica")
-        # Render the teacher's name as a fixed signature above the signature line.
-        draw_text(c, 810, 1277, "Abhishek Santra", 27, ink,
-                  "Times-Italic", "center")
+        draw_round(c, 50, 1286, 390, 42, 21, navy, gold, 2)
+        draw_text(c, 76, 1312, "DATE OF ISSUE:", 16, pale, "Helvetica-Bold")
+        draw_round(c, 232, 1288, 206, 38, 19, cream, gold, 1.5)
+        draw_text(c, 335, 1312, issue_date, 16, ink, "Helvetica", "center")
+
+        # Exact black teacher signature supplied in Reference Image 2.
+        # It is embedded as transparent artwork; no typed-name substitute is used.
+        signature_png = base64.b64decode("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")
+        signature_image = ImageReader(io.BytesIO(signature_png))
+        c.drawImage(signature_image, px(650), py(1280),
+                    width=px(330), height=px(64), mask="auto",
+                    preserveAspectRatio=True, anchor="c")
+        draw_line(c, 642, 1287, 974, 1287, ink, 2)
         draw_text(c, 722, 1320, "Signature of Teacher",
                   17, ink, "Helvetica-Bold")
 
