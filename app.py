@@ -214,7 +214,7 @@ def student_required():
 def normalize_student_class(value):
     value = str(value or "").strip()
     match = __import__("re").fullmatch(
-        r"class\s*(1[0-2]|[1-9]|XII|XI|X|IX|VIII|VII|VI|V|IV|III|II|I)",
+        r"class[\s-]*(1[0-2]|[1-9]|XII|XI|X|IX|VIII|VII|VI|V|IV|III|II|I)",
         value, flags=__import__("re").IGNORECASE
     )
     if not match:
@@ -229,7 +229,11 @@ def normalize_student_class(value):
 
 
 def student_class_roman_alias(value):
-    number = int(str(value).replace("Class ", ""))
+    # Normalize both current and legacy session formats (for example, "Class-5").
+    canonical = normalize_student_class(value)
+    if not canonical:
+        return str(value or "")
+    number = int(canonical.split()[1])
     number_to_roman = {
         1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI",
         7: "VII", 8: "VIII", 9: "IX", 10: "X", 11: "XI", 12: "XII",
@@ -396,6 +400,13 @@ def health():
 def public_exams():
     if not student_required():
         return error("Student sign-in required", 401)
+    # Repair older sessions that stored classes as "Class-5" instead of
+    # the canonical "Class 5" before building eligibility query parameters.
+    canonical_class = normalize_student_class(session.get("student_class"))
+    if not canonical_class:
+        session.clear()
+        return error("Your class session is invalid. Please sign in again.", 401)
+    session["student_class"] = canonical_class
     with db() as conn, conn.cursor() as cur:
         cur.execute("""
             SELECT e.id, e.title, e.subject, e.target_class, e.target_classes, e.topic, e.difficulty,
