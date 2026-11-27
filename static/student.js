@@ -65,9 +65,19 @@
   if(!monitoringActive)return;event.preventDefault();logExamActivity("context_menu");
  },true);
  document.addEventListener("keydown",event=>{
-  if(!monitoringActive)return;
-  const key=String(event.key||"").toLowerCase(),mod=event.ctrlKey||event.metaKey;
-  if(key==="printscreen"){event.preventDefault();logExamActivity("print_screen_key");return}
+  if(!monitoringActive||!event.isTrusted)return;
+  const key=String(event.key||"").toLowerCase();
+  const code=String(event.code||"").toLowerCase();
+  const mod=event.ctrlKey||event.metaKey;
+  const isPrintScreenKey=key==="printscreen"||key==="print"||key==="snapshot"||code==="printscreen";
+  // Best-effort detection for common OS screenshot hotkeys when the browser
+  // receives the keyboard event. The OS may intercept these before the page.
+  const isWindowsSnipShortcut=(event.shiftKey&&(event.metaKey||event.getModifierState?.("OS"))&&key==="s");
+  const isMacScreenshotShortcut=event.metaKey&&event.shiftKey&&["3","4","5"].includes(key);
+  if(isPrintScreenKey||isWindowsSnipShortcut||isMacScreenshotShortcut){
+   logExamActivity("print_screen_key");
+   return;
+  }
   if(key==="f12"||(mod&&event.shiftKey&&["i","j","c"].includes(key))){
    event.preventDefault();logExamActivity("devtools_shortcut");return;
   }
