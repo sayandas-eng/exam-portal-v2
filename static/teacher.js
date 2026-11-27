@@ -30,7 +30,7 @@ async function load(){
  try{
   const data=await api("/api/admin/attempts?exam_id="+encodeURIComponent(selectedExam.id)+"&refresh="+Date.now());
   const attempts=data.attempts||[];
-  body.innerHTML=attempts.length?attempts.map(a=>'<tr><td><div class="student">'+esc(a.student_name)+'</div></td><td>'+esc(a.exam_title)+'</td><td>'+esc(a.student_class)+'</td><td>'+esc(a.submitted_at?new Date(a.submitted_at).toLocaleString():"—")+'</td><td><strong>'+Number(a.obtained_marks||0).toFixed(2).replace(/\.00$/,"")+' / '+Number(a.total_marks||0).toFixed(2).replace(/\.00$/,"")+'</strong></td><td><span class="activity-count">'+Number(a.activity_count||0)+'</span> flags</td><td>'+esc(a.status)+'</td><td>'+(["submitted","evaluated"].includes(a.status)?'<button class="open" data-open="'+esc(a.id)+'">Review →</button>':"—")+(a.status==="evaluated"&&a.pdf_available?' <a class="download" href="/api/admin/attempts/'+encodeURIComponent(a.id)+'/result.pdf">Download PDF</a>':"")+'</td></tr>').join(""):'<tr><td colspan="8" class="empty">No student submissions for this examination yet.</td></tr>';
+  body.innerHTML=attempts.length?attempts.map(a=>'<tr><td><div class="student">'+esc(a.student_name)+'</div></td><td>'+esc(a.exam_title)+'</td><td>'+esc(a.student_class)+'</td><td>'+esc(a.submitted_at?new Date(a.submitted_at).toLocaleString():"—")+'</td><td><strong>'+Number(a.obtained_marks||0).toFixed(2).replace(/\.00$/,"")+' / '+Number(a.total_marks||0).toFixed(2).replace(/\.00$/,"")+'</strong></td><td><button type="button" class="activity-count" data-flags="'+esc(a.id)+'" aria-label="Show '+Number(a.activity_count||0)+' activity flags">'+Number(a.activity_count||0)+'</button> flags</td><td>'+esc(a.status)+'</td><td>'+(["submitted","evaluated"].includes(a.status)?'<button class="open" data-open="'+esc(a.id)+'">Review →</button>':"—")+(a.status==="evaluated"&&a.pdf_available?' <a class="download" href="/api/admin/attempts/'+encodeURIComponent(a.id)+'/result.pdf">Download PDF</a>':"")+'</td></tr>').join(""):'<tr><td colspan="8" class="empty">No student submissions for this examination yet.</td></tr>';
  }catch(error){body.innerHTML='<tr><td colspan="8" class="empty">Unable to load submissions.</td></tr>';notice("Could not load submissions: "+error.message);}
 }
 async function enterExam(id){
@@ -83,7 +83,49 @@ $("#exam-cards").addEventListener("click",async event=>{
 });
 $("#back-exams").addEventListener("click",()=>{$("#list-view").classList.add("hidden");$("#exam-list-view").classList.remove("hidden");selectedExam=null;loadExams();});
 $("#refresh").addEventListener("click",()=>load());
-$("#rows").addEventListener("click",event=>{const button=event.target.closest("[data-open]");if(button)openAttempt(button.dataset.open).catch(e=>notice(e.message));});
+const flagTypes=[
+ ["print_screen_key","Print Screen key detections","Screenshot-key signals only; actual OS screenshots cannot be reliably detected."],
+ ["tab_hidden","Tab switches / app switches","Exam tab became hidden or the student switched apps."],
+ ["window_blur","Window lost focus / possibly minimized","Browser window lost focus; this does not prove it was minimized."],
+ ["copy_blocked","Copy attempts","Blocked copy actions."],
+ ["paste_blocked","Paste attempts","Blocked paste actions."],
+ ["cut_blocked","Cut attempts","Blocked cut actions."],
+ ["context_menu","Right-click attempts","Context menu attempts."],
+ ["print_attempt","Print attempts","Print dialog attempts."],
+ ["devtools_shortcut","Developer-tools shortcuts","Detected developer-tools shortcut attempts."],
+ ["blocked_shortcut","Restricted shortcuts","Other restricted keyboard shortcuts."],
+ ["fullscreen_exit","Fullscreen exits","Exits from fullscreen mode."],
+ ["multiple_tab_detected","Multiple-tab detections","Another exam tab was detected."],
+ ["navigation_warning","Navigation / reload attempts","Attempts to leave or reload the exam."]
+];
+async function showFlagPopup(attemptId){
+ const overlay=$("#activity-popup"), content=$("#activity-popup-content"), title=$("#activity-popup-title");
+ overlay.classList.remove("hidden");overlay.setAttribute("aria-hidden","false");
+ content.innerHTML='<p class="activity-popup-loading">Loading recorded flags…</p>';
+ try{
+  const data=await api("/api/admin/attempts/"+encodeURIComponent(attemptId)+"/activity");
+  const events=(data.events||[]).filter(e=>e.event_type!=="tab_returned");
+  const counts=flagTypes.map(([type,label,description])=>({type,label,description,count:events.filter(e=>e.event_type===type).length})).filter(item=>item.count>0);
+  title.textContent="Activity flags · "+events.length+" recorded";
+  content.innerHTML=counts.length?'<div class="activity-flag-grid">'+counts.map(item=>'<article class="activity-flag-item"><strong>'+item.count+'</strong><div><b>'+esc(item.label)+'</b><small>'+esc(item.description)+'</small></div></article>').join("")+'</div>':'<p class="activity-popup-empty">No suspicious activity flags were recorded for this attempt.</p>';
+ }catch(error){
+  title.textContent="Activity flags";
+  content.innerHTML='<p class="activity-popup-empty">Unable to load activity flags: '+esc(error.message)+'</p>';
+ }
+}
+function closeFlagPopup(){
+ const overlay=$("#activity-popup");overlay.classList.add("hidden");overlay.setAttribute("aria-hidden","true");
+}
+$("#rows").addEventListener("click",event=>{
+ const flag=event.target.closest("[data-flags]");
+ if(flag){showFlagPopup(flag.dataset.flags);return;}
+ const button=event.target.closest("[data-open]");
+ if(button)openAttempt(button.dataset.open).catch(e=>notice(e.message));
+});
+$("#activity-popup").addEventListener("click",event=>{if(event.target===$("#activity-popup"))closeFlagPopup();});
+$("#activity-popup-panel").addEventListener("click",event=>event.stopPropagation());
+$("#activity-popup-close").addEventListener("click",closeFlagPopup);
+document.addEventListener("keydown",event=>{if(event.key==="Escape"&&!$("#activity-popup").classList.contains("hidden"))closeFlagPopup();});
 $("#back").addEventListener("click",()=>{$("#review-view").classList.add("hidden");$("#list-view").classList.remove("hidden");load();});
 $("#finalise").addEventListener("click",async()=>{
  if(!current)return;
