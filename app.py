@@ -728,8 +728,18 @@ def start_exam(exam_id):
         exam = cur.fetchone()
         if not exam:
             return error("Exam not found or not currently live", 404)
-        if exam.get("target_classes") is not None and student_class not in exam["target_classes"]:
-            return error("This examination is available only to the classes specified by the teacher.", 403)
+        if exam.get("target_classes") is not None:
+            assigned = exam["target_classes"]
+            roman_alias = student_class_roman_alias(student_class)
+            numeric_alias = student_class.replace("Class ", "")
+            legacy_target = normalize_student_class(exam.get("target_class"))
+            assigned_values = {str(value).strip().lower() for value in assigned} if isinstance(assigned, (list, tuple, set)) else {str(assigned).strip().lower()}
+            eligible_values = {
+                student_class.lower(), roman_alias.lower(),
+                numeric_alias.lower(), roman_alias.replace("Class ", "").lower()
+            }
+            if not (assigned_values & eligible_values) and legacy_target != student_class:
+                return error("This examination is available only to the classes specified by the teacher.", 403)
         if exam["student_until"] <= datetime.now(timezone.utc):
             return error("The student examination window has closed. The remaining time is reserved for teacher review.", 403)
         session_id = str(uuid.uuid4())
