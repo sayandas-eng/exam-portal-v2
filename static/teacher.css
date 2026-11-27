@@ -99,3 +99,24 @@ header{gap:24px}
 #activity-events li{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid #e2e8f0;font-size:13px;color:#334155}
 #activity-events time{white-space:nowrap;color:#64748b;font-size:12px}
 #activity-events .activity-empty{color:#64748b}
+
+
+/* Activity flags click-through summary popup */
+.activity-count{appearance:none;border:0;cursor:pointer;font:800 12px "DM Sans",sans-serif;line-height:1.2}
+.activity-count:hover{background:#ffe7ad;box-shadow:0 0 0 2px #f5d58d}
+.activity-count:focus-visible{outline:3px solid #5148d9;outline-offset:2px}
+.activity-popup{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(5,10,24,.68);backdrop-filter:blur(3px)}
+.activity-popup.hidden{display:none!important}
+.activity-popup-panel{width:min(620px,100%);max-height:min(80vh,720px);overflow:auto;background:#fff;border:1px solid #e5e9f2;border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.28);padding:22px}
+.activity-popup-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
+.activity-popup-header h2{font:800 19px Manrope,sans-serif;color:#17365f;margin:0}
+#activity-popup-close{width:34px;height:34px;border:0;border-radius:9px;background:#f1f3f8;color:#475569;font-size:24px;line-height:1;cursor:pointer}
+#activity-popup-close:hover{background:#e5eaf3}
+.activity-flag-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.activity-flag-item{display:flex;align-items:flex-start;gap:12px;padding:13px;border:1px solid #e7ebf2;border-radius:12px;background:#fbfcfe;min-width:0}
+.activity-flag-item>strong{display:grid;place-items:center;flex:0 0 38px;height:38px;border-radius:10px;background:#fff3d8;color:#8a5b08;font:800 17px Manrope}
+.activity-flag-item>div{min-width:0;display:flex;flex-direction:column;gap:4px}
+.activity-flag-item b{font:700 12px "DM Sans",sans-serif;color:#26344a}
+.activity-flag-item small{font:400 11px/1.45 "DM Sans",sans-serif;color:#778196}
+.activity-popup-loading,.activity-popup-empty{margin:0;padding:22px;text-align:center;color:#64748b;font:500 13px "DM Sans",sans-serif}
+@media(max-width:520px){.activity-popup{padding:12px}.activity-popup-panel{padding:17px;border-radius:15px;max-height:85vh}.activity-flag-grid{grid-template-columns:1fr}.activity-flag-item{padding:11px}}
