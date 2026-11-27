@@ -432,11 +432,23 @@ def public_exams():
                   e.target_classes IS NULL
                   OR e.target_classes ? %s
                   OR e.target_classes ? %s
+                  OR e.target_classes ? %s
+                  OR e.target_classes ? %s
+                  OR lower(replace(btrim(coalesce(e.target_class, '')), '-', ' ')) IN (%s, %s, %s, %s)
               )
             ORDER BY e.published_at DESC NULLS LAST
-        """, (session["student_name"], session["student_class"],
+        """, (
               session["student_name"], session["student_class"],
-              session["student_class"], student_class_roman_alias(session["student_class"])))
+              session["student_name"], session["student_class"],
+              session["student_class"],
+              student_class_roman_alias(session["student_class"]),
+              session["student_class"].replace("Class ", ""),
+              student_class_roman_alias(session["student_class"]).replace("Class ", ""),
+              session["student_class"].lower(),
+              student_class_roman_alias(session["student_class"]).lower(),
+              session["student_class"].replace("Class ", "class ").lower(),
+              student_class_roman_alias(session["student_class"]).replace("Class ", "class ").lower()
+        ))
         return jsonify({"ok": True, "exams": cur.fetchall()})
 
 
