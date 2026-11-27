@@ -212,9 +212,20 @@ def student_required():
 
 
 def normalize_student_class(value):
-    value = str(value).strip()
-    match = __import__("re").fullmatch(r"class\s*(1[0-2]|[1-9])", value, flags=__import__("re").IGNORECASE)
-    return f"Class {match.group(1)}" if match else ""
+    value = str(value or "").strip()
+    match = __import__("re").fullmatch(
+        r"class\s*(1[0-2]|[1-9]|XII|XI|X|IX|VIII|VII|VI|V|IV|III|II|I)",
+        value, flags=__import__("re").IGNORECASE
+    )
+    if not match:
+        return ""
+    token = match.group(1).upper()
+    roman_to_number = {
+        "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6,
+        "VII": 7, "VIII": 8, "IX": 9, "X": 10, "XI": 11, "XII": 12,
+    }
+    number = roman_to_number.get(token, int(token) if token.isdigit() else None)
+    return f"Class {number}" if number else ""
 
 
 
@@ -389,10 +400,15 @@ def public_exams():
                    ) AS already_started
             FROM portal_v2_exams e
             WHERE e.status = 'live' AND e.available_from <= now() AND now() < e.available_until
-              AND (e.target_classes IS NULL OR e.target_classes ? %s)
+              AND (
+                  e.target_classes IS NULL
+                  OR e.target_classes ? %s
+                  OR e.target_classes ? %s
+              )
             ORDER BY e.published_at DESC NULLS LAST
         """, (session["student_name"], session["student_class"],
-              session["student_name"], session["student_class"], session["student_class"]))
+              session["student_name"], session["student_class"],
+              session["student_class"], session["student_class"].replace("Class ", "Class ")))
         return jsonify({"ok": True, "exams": cur.fetchall()})
 
 
