@@ -212,9 +212,29 @@ def student_required():
 
 
 def normalize_student_class(value):
-    value = str(value).strip()
-    match = __import__("re").fullmatch(r"class\s*(1[0-2]|[1-9])", value, flags=__import__("re").IGNORECASE)
-    return f"Class {match.group(1)}" if match else ""
+    value = str(value or "").strip()
+    match = __import__("re").fullmatch(
+        r"class\s*(1[0-2]|[1-9]|XII|XI|X|IX|VIII|VII|VI|V|IV|III|II|I)",
+        value, flags=__import__("re").IGNORECASE
+    )
+    if not match:
+        return ""
+    token = match.group(1).upper()
+    roman_to_number = {
+        "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6,
+        "VII": 7, "VIII": 8, "IX": 9, "X": 10, "XI": 11, "XII": 12,
+    }
+    number = roman_to_number.get(token, int(token) if token.isdigit() else None)
+    return f"Class {number}" if number else ""
+
+
+def student_class_roman_alias(value):
+    number = int(str(value).replace("Class ", ""))
+    number_to_roman = {
+        1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI",
+        7: "VII", 8: "VIII", 9: "IX", 10: "X", 11: "XI", 12: "XII",
+    }
+    return f"Class {number_to_roman[number]}"
 
 
 
@@ -258,6 +278,14 @@ def normalize_exam_target_classes(target_classes=None, target_class=None):
             return " "
         remainder = re.sub(r"(?<!\d)(1[0-2]|[1-9])\s*(?:-|–|to)\s*(1[0-2]|[1-9])(?!\d)", replace_range, value, flags=re.IGNORECASE)
         found.extend(int(number) for number in re.findall(r"(?<!\d)(1[0-2]|[1-9])(?!\d)", remainder))
+        roman_to_number = {
+            "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6,
+            "VII": 7, "VIII": 8, "IX": 9, "X": 10, "XI": 11, "XII": 12,
+        }
+        found.extend(roman_to_number[token.upper()] for token in re.findall(
+            r"\b(?:XII|XI|X|IX|VIII|VII|VI|V|IV|III|II|I)\b",
+            value, flags=re.IGNORECASE
+        ))
         return set(found)
 
     included = extract_numbers(include_text)
@@ -389,10 +417,15 @@ def public_exams():
                    ) AS already_started
             FROM portal_v2_exams e
             WHERE e.status = 'live' AND e.available_from <= now() AND now() < e.available_until
-              AND (e.target_classes IS NULL OR e.target_classes ? %s)
+              AND (
+                  e.target_classes IS NULL
+                  OR e.target_classes ? %s
+                  OR e.target_classes ? %s
+              )
             ORDER BY e.published_at DESC NULLS LAST
         """, (session["student_name"], session["student_class"],
-              session["student_name"], session["student_class"], session["student_class"]))
+              session["student_name"], session["student_class"],
+              session["student_class"], student_class_roman_alias(session["student_class"])))
         return jsonify({"ok": True, "exams": cur.fetchall()})
 
 

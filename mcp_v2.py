@@ -381,11 +381,19 @@ def normalize_class(value: str) -> str | None:
     value = str(value or "").strip()
     if value.lower() in ("any", "any class", "all", "all classes", "open to all"):
         return None
-    if value.isdigit():
-        value = f"Class {value}"
-    if not value or len(value) > 60:
-        raise ValueError("Provide a valid target class (for example Class 10) or 'Any Class'.")
-    return value
+    match = re.fullmatch(
+        r"(?:class\s*)?(1[0-2]|[1-9]|XII|XI|X|IX|VIII|VII|VI|V|IV|III|II|I)",
+        value, flags=re.IGNORECASE
+    )
+    if not match:
+        raise ValueError("Provide a valid target class (for example Class 10 or Class XII) or 'Any Class'.")
+    token = match.group(1).upper()
+    roman_to_number = {
+        "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6,
+        "VII": 7, "VIII": 8, "IX": 9, "X": 10, "XI": 11, "XII": 12,
+    }
+    number = roman_to_number.get(token, int(token) if token.isdigit() else None)
+    return f"Class {number}" if number else None
 
 @mcp.tool()
 def create_and_publish_exam(
